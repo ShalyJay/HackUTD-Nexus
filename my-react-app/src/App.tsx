@@ -113,6 +113,13 @@ function App() {
     }
   };
 
+  const handleRetryUpload = () => {
+    // Reset audit result and show dashboard again for re-upload
+    console.log("Retrying file upload");
+    setAuditResult(null);
+    setIsAnalyzing(false);
+  };
+
   // 🔀 If we're in audit-waiting mode, show the audit waiting screen
   if (view === "audit-waiting") {
     // Show dashboard for file upload while waiting for compliance check
@@ -138,6 +145,7 @@ function App() {
     return (
       <AuditWaiting
         onCompliancePassed={handleCompliancePassed}
+        onRetryUpload={handleRetryUpload}
         auditResult={auditResult}
         isAnalyzing={isAnalyzing}
       />
