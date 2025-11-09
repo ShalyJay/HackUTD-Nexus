@@ -8,7 +8,7 @@ type SignupPayload = {
   email: string;
   password: string;
   companyName: string;
-  accountType: "vendors" | "clients" | "both";
+  accountType: "vendors" | "clients" | "admin";
 };
 
 function App() {
@@ -18,7 +18,7 @@ function App() {
     email: "",
     password: "",
     companyName: "",
-    accountType: "both",
+    accountType: "admin",
   });
 
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
@@ -344,7 +344,7 @@ function App() {
                   type="radio"
                   name="accountType"
                   value="both"
-                  checked={form.accountType === "both"}
+                  checked={form.accountType === "admin"}
                   onChange={handleChange}
                 />
                 Both
