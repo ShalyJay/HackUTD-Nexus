@@ -258,3 +258,32 @@ export default function Dashboard({
     </div>
   );
 }
+
+// my-react-app/src/dashboard.tsx (or wherever your dashboard file is)
+
+import React from 'react';
+import Chatbot from './components/Chatbot'; // 1. Import your new component
+import './components/Chatbot.css'; // 2. Import the CSS (create this file)
+
+function YourDashboard() {
+  return (
+    <div className="dashboard-layout">
+      
+      <div className="sidebar">
+        {/* Your other links */}
+      </div>
+
+      <div className="main-content">
+        <h1>Dashboard</h1>
+        <p>Welcome. Please complete the onboarding process below.</p>
+        
+        {/* 3. Add the chatbot component here */}
+        <Chatbot />
+        
+      </div>
+
+    </div>
+  );
+}
+
+export default YourDashboard;
