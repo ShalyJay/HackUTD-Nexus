@@ -71,3 +71,45 @@ export default defineConfig([
   },
 ])
 ```
+
+THE CODE BELOW IS FOR THE PAGES USED TO UPLOAD FILES. JUST COPY AND PASTE THIS INTO YOUR FILES.
+
+// src/pages/UploadPage.tsx
+import React, { useState } from "react";
+import { uploadFile } from "../utils/uploadFile";
+
+export default function UploadPage() {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const downloadUrl = await uploadFile(file, "exampleUser123");
+      setUrl(downloadUrl);
+    } catch (error) {
+      console.error("Upload failed:", error);
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div>
+      <h2>Upload Your Report</h2>
+      <input
+        type="file"
+        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+      />
+      <button disabled={!file || uploading} onClick={handleUpload}>
+        {uploading ? "Uploading..." : "Upload"}
+      </button>
+      {url && (
+        <p>
+          File uploaded: <a href={url}>View File</a>
+        </p>
+      )}
+    </div>
+  );
+}
