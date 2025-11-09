@@ -1,0 +1,87 @@
+// my-react-app/src/components/Chatbot.tsx
+import React, { useState, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+import { sendMessageToBot } from '../services/apiService'; // Import your new connector
+
+// Add this line to your frontend's `package.json` dependencies:
+// "uuid": "^9.0.0" (and run `npm install`)
+// and "npm install @types/uuid --save-dev"
+
+function Chatbot() {
+  const [messages, setMessages] = useState<any[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const sessionIdRef = useRef(uuidv4()); // Create a unique session ID
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Send the initial welcome message
+  useEffect(() => {
+    const sendWelcome = async () => {
+      setIsLoading(true);
+      try {
+        const botResponse = await sendMessageToBot("INITIATE_ONBOARDING", sessionIdRef.current);
+        setMessages([{ role: 'assistant', content: botResponse }]);
+      } catch (error: any) {
+        setMessages([{ role: 'error', content: "Failed to connect to the bot." }]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    sendWelcome();
+  }, []); // Empty array means this runs only once
+
+  // Auto-scroll to the bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+
+    const userMessage = input;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsLoading(true);
+
+    try {
+      const botResponse = await sendMessageToBot(userMessage, sessionIdRef.current);
+      setMessages(prev => [...prev, { role: 'assistant', content: botResponse }]);
+    } catch (error: any) {
+      setMessages(prev => [...prev, { role: 'error', content: "Sorry, I'm having trouble connecting." }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="chatbot-container">
+      <div className="chatbot-header">Fintech Onboarding</div>
+      <div className="chatbot-window">
+        {messages.map((msg, index) => (
+          <div key={index} className={`message-row ${msg.role}`}>
+            <div className={`message-bubble ${msg.role}`}>{msg.content}</div>
+          </div>
+        ))}
+        {isLoading && (
+          <div className="message-row assistant">
+            <div className="typing-indicator"><span>.</span><span>.</span><span>.</span></div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+      <form className="chatbot-input-area" onSubmit={handleSubmit}>
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Type your message..."
+          disabled={isLoading}
+        />
+        <button type="submit" disabled={isLoading || !input.trim()}>Send</button>
+      </form>
+    </div>
+  );
+}
+
+export default Chatbot;
