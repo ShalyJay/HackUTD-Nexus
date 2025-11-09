@@ -4,6 +4,8 @@ import Dashboard from "./dashboard";
 import AuditWaiting from "./AuditWaiting";
 import { UserService } from "./services/userService";
 import type { AuditResult } from "./services/auditResultService";
+import { ComplianceService } from "./services/complianceService";
+import { AuditService } from "./services/auditService";
 import { AnimatePresence, motion } from "framer-motion";
 
 // Theme configuration
@@ -66,6 +68,21 @@ type SignupPayload = {
   };
 };
 
+type LoginPayload = {
+  email: string;
+  password: string;
+};
+
+// Hardcoded admin credentials (for demo purposes)
+const ADMIN_USER = {
+  email: "admin@hackutd.com",
+  password: "AdminPassword123!",
+  firstName: "Admin",
+  lastName: "User",
+  companyName: "HackUTD-Nexus",
+  accountType: "admin" as const
+};
+
 // Shared styles
 const inputStyles = {
   width: "100%",
@@ -108,7 +125,12 @@ function App() {
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [view, setView] = useState<"signup" | "dashboard" | "audit-waiting">("signup");
+  const [view, setView] = useState<"signup" | "login" | "dashboard" | "audit-waiting">("signup");
+  const [authMode, setAuthMode] = useState<"signup" | "login">("signup");
+  const [loginForm, setLoginForm] = useState<LoginPayload>({
+    email: "",
+    password: ""
+  });
   const [auditResult, setAuditResult] = useState<AuditResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -213,28 +235,169 @@ function App() {
     setIsAnalyzing(false);
   };
 
-  // 🔀 If we're in audit-waiting mode, show the audit waiting screen
-  if (view === "audit-waiting") {
-    // Show dashboard for file upload while waiting for compliance check
-    if (!auditResult) {
-      return (
-        <Dashboard
-          companyName={currentUser?.userData?.companyName || form.companyName}
-          firstName={currentUser?.userData?.firstName || form.firstName}
-          onAuditResult={(result) => {
-            console.log("Audit result received:", result);
-            setAuditResult(result);
-            setIsAnalyzing(false);
-          }}
-          onAnalysisStart={() => {
-            console.log("Analysis starting");
-            setIsAnalyzing(true);
-          }}
-        />
-      );
+  async function handleLogin(e: FormEvent) {
+    e.preventDefault();
+    setStatus("loading");
+    setErrorMessage(null);
+
+    try {
+      const { email, password } = loginForm;
+
+      // Check if this is the hardcoded admin user
+      if (email === ADMIN_USER.email && password === ADMIN_USER.password) {
+        console.log("Admin login successful");
+        
+        // Create admin user session
+        const adminUser = {
+          userId: "admin_001",
+          password: password,
+          userData: {
+            firstName: ADMIN_USER.firstName,
+            lastName: ADMIN_USER.lastName,
+            email: ADMIN_USER.email,
+            companyName: ADMIN_USER.companyName,
+            accountType: ADMIN_USER.accountType,
+          }
+        };
+
+        setCurrentUser(adminUser);
+        setStatus("success");
+        setView("dashboard");
+        return;
+      }
+
+      // Try to authenticate with Firebase for non-admin users
+      const { signInWithEmailAndPassword } = await import("firebase/auth");
+      const { auth } = await import("./firebase");
+      
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userProfile = await UserService.getUserProfile(userCredential.user.uid);
+      
+      if (!userProfile) {
+        throw new Error("User profile not found");
+      }
+
+      // Set current user and go to dashboard
+      setCurrentUser({
+        userId: userCredential.user.uid,
+        userData: userProfile
+      });
+
+      setStatus("success");
+      setView("dashboard");
+    } catch (err) {
+      console.error("Login error:", err);
+      setStatus("error");
+
+      let errorMessage = "Login failed. Please check your credentials.";
+
+      if (err instanceof Error) {
+        const errorCode = (err as any).code;
+
+        if (errorCode === "auth/user-not-found") {
+          errorMessage = "No account found with this email address.";
+        } else if (errorCode === "auth/wrong-password") {
+          errorMessage = "Incorrect password. Please try again.";
+        } else if (errorCode === "auth/invalid-email") {
+          errorMessage = "Please enter a valid email address.";
+        } else if (errorCode === "auth/user-disabled") {
+          errorMessage = "This account has been disabled.";
+        } else if (errorCode === "auth/network-request-failed") {
+          errorMessage = "Network error. Please check your internet connection.";
+        }
+      }
+
+      setErrorMessage(errorMessage);
     }
+  }
+
+  const handleLoginChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setLoginForm(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  async function handleUploadDocuments(e: FormEvent) {
+    e.preventDefault();
     
-    // Show audit result waiting screen once analysis is done
+    // Collect all uploaded files
+    const uploadedFiles: File[] = [];
+    if (form.documents.soc2Report) uploadedFiles.push(form.documents.soc2Report);
+    if (form.documents.iso27001Cert) uploadedFiles.push(form.documents.iso27001Cert);
+    if (form.documents.auditReports) uploadedFiles.push(form.documents.auditReports);
+    if (form.documents.insuranceCert) uploadedFiles.push(form.documents.insuranceCert);
+
+    if (uploadedFiles.length === 0) {
+      setErrorMessage("Please upload at least one document");
+      return;
+    }
+
+    try {
+      setIsAnalyzing(true);
+      setErrorMessage(null);
+
+      // Create metadata for each file
+      const metadata = uploadedFiles.map(file => ({
+        type: getDocumentType(file.name),
+      }));
+
+      // Store documents temporarily
+      const tempUserId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      await ComplianceService.storeTemporaryDocuments(
+        tempUserId,
+        uploadedFiles,
+        metadata
+      );
+
+      // Check compliance with Gemini analysis
+      const complianceResult = await ComplianceService.checkComplianceAndStore(tempUserId, uploadedFiles);
+
+      // Generate audit report with Gemini summary
+      const auditReport = await AuditService.generateAuditReport(
+        tempUserId,
+        complianceResult,
+        currentUser?.userData?.companyName || form.companyName
+      );
+
+      // Create AuditResult object combining the audit report data
+      const auditResultData: AuditResult = {
+        tempUserId,
+        status: auditReport.status,
+        complianceScore: complianceResult.score,
+        complianceResult: complianceResult,
+        geminiSummary: auditReport.geminiSummary,
+        requiredActions: auditReport.requiredActions || [],
+        timestamp: auditReport.timestamp
+      };
+
+      setAuditResult(auditResultData);
+      setIsAnalyzing(false);
+      // Transition to audit-waiting view to show results
+      setView("audit-waiting");
+    } catch (err) {
+      console.error('Upload failed:', err);
+      setIsAnalyzing(false);
+      const errorMsg = err instanceof Error ? err.message : 'Failed to process documents. Please try again.';
+      setErrorMessage(errorMsg);
+    }
+  }
+
+  // Helper function to determine document type from filename
+  function getDocumentType(filename: string): string {
+    const lowercased = filename.toLowerCase();
+    if (lowercased.includes('soc')) return 'soc2';
+    if (lowercased.includes('iso')) return 'iso27001';
+    if (lowercased.includes('audit')) return 'audit';
+    if (lowercased.includes('insurance')) return 'insurance';
+    return 'other';
+  }
+
+  // 🔀 If we're in audit-waiting mode, show the audit result screen
+  if (view === "audit-waiting") {
+    // Show audit result waiting screen with compliance analysis results
     return (
       <AuditWaiting
         onCompliancePassed={handleCompliancePassed}
@@ -255,7 +418,145 @@ function App() {
     );
   }
 
-  // 📝 Default: signup view
+  // � If we're in login mode, show the login form
+  if (view === "login" || authMode === "login") {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          width: "100vw",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: theme.warmWhite,
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 400,
+            padding: "2rem",
+            background: "white",
+            borderRadius: 16,
+            boxShadow: "0 20px 50px rgba(15,23,42,0.4)",
+            zIndex: 10,
+          }}
+        >
+          <h1 style={{ textAlign: "center", color: theme.text, marginBottom: "0.5rem", fontSize: 28 }}>
+            Welcome Back
+          </h1>
+          <p style={{ textAlign: "center", color: "#6b7280", marginBottom: "1.5rem", fontSize: 14 }}>
+            Log in to your account
+          </p>
+
+          <form onSubmit={handleLogin}>
+            <div style={{ marginBottom: "1rem" }}>
+              <label style={{ display: "block", marginBottom: "0.5rem", color: theme.text, fontWeight: 500, fontSize: 14 }}>
+                Email
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={loginForm.email}
+                onChange={handleLoginChange}
+                placeholder="Enter your email"
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.75rem",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label style={{ display: "block", marginBottom: "0.5rem", color: theme.text, fontWeight: 500, fontSize: 14 }}>
+                Password
+              </label>
+              <input
+                type="password"
+                name="password"
+                value={loginForm.password}
+                onChange={handleLoginChange}
+                placeholder="Enter your password"
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.75rem",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            {errorMessage && (
+              <div style={{
+                marginBottom: "1rem",
+                padding: "0.75rem",
+                background: "#fee2e2",
+                color: "#dc2626",
+                borderRadius: 8,
+                fontSize: 14,
+              }}>
+                {errorMessage}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={status === "loading"}
+              style={{
+                width: "100%",
+                padding: "0.75rem",
+                background: theme.maroon,
+                color: "white",
+                border: "none",
+                borderRadius: 8,
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: status === "loading" ? "default" : "pointer",
+                opacity: status === "loading" ? 0.7 : 1,
+                marginBottom: "1rem",
+              }}
+            >
+              {status === "loading" ? "Logging in..." : "Log In"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("signup");
+                setLoginForm({ email: "", password: "" });
+                setErrorMessage(null);
+                setStatus("idle");
+              }}
+              style={{
+                width: "100%",
+                padding: "0.75rem",
+                background: "transparent",
+                color: theme.maroon,
+                border: `1px solid ${theme.maroon}`,
+                borderRadius: 8,
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              Create New Account
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // �📝 Default: signup view
   // Don't show signup form if we're in other views
   if (view !== "signup") {
     return null;
@@ -332,16 +633,40 @@ function App() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
           >
-            <h1
-              style={{
-                fontSize: "1.75rem",
-                fontWeight: 600,
-                marginBottom: "0.5rem",
-                color: theme.maroon,
-              }}
-            >
-              {step === 1 ? "Create your account" : "Upload Documents"}
-            </h1>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+              <h1
+                style={{
+                  fontSize: "1.75rem",
+                  fontWeight: 600,
+                  marginBottom: 0,
+                  color: theme.maroon,
+                }}
+              >
+                {step === 1 ? "Create your account" : "Upload Documents"}
+              </h1>
+              {step === 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("login");
+                    setView("login");
+                  }}
+                  style={{
+                    background: "transparent",
+                    color: theme.maroon,
+                    border: `1px solid ${theme.maroon}`,
+                    borderRadius: 8,
+                    padding: "0.5rem 1rem",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Have an account? Log In
+                </button>
+              )}
+            </div>
             <p
               style={{
                 fontSize: 14,
@@ -727,6 +1052,123 @@ function App() {
                     </div>
                   </div>
 
+                  {/* File Upload Preview Section */}
+                  {(form.documents.soc2Report || form.documents.iso27001Cert || form.documents.auditReports || form.documents.insuranceCert) && (
+                    <div style={{
+                      background: `${theme.maroon}08`,
+                      border: `2px solid ${theme.gold}`,
+                      borderRadius: 12,
+                      padding: "1.5rem",
+                      marginTop: "1.5rem"
+                    }}>
+                      <div style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.75rem",
+                        marginBottom: "1rem"
+                      }}>
+                        <span style={{ fontSize: 24 }}>✅</span>
+                        <h3 style={{ color: theme.maroon, fontSize: 16, fontWeight: 600, margin: 0 }}>
+                          Files Ready for Review
+                        </h3>
+                      </div>
+                      
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                        {form.documents.soc2Report && (
+                          <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.75rem",
+                            padding: "0.75rem",
+                            background: "white",
+                            borderRadius: 8,
+                            borderLeft: `4px solid ${theme.maroon}`
+                          }}>
+                            <span style={{ fontSize: 18 }}>📄</span>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: theme.text }}>
+                                SOC 2 Report
+                              </p>
+                              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+                                {form.documents.soc2Report.name} ({(form.documents.soc2Report.size / 1024).toFixed(2)} KB)
+                              </p>
+                            </div>
+                            <span style={{ fontSize: 16, color: "#16a34a" }}>✓</span>
+                          </div>
+                        )}
+                        
+                        {form.documents.iso27001Cert && (
+                          <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.75rem",
+                            padding: "0.75rem",
+                            background: "white",
+                            borderRadius: 8,
+                            borderLeft: `4px solid ${theme.maroon}`
+                          }}>
+                            <span style={{ fontSize: 18 }}>📄</span>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: theme.text }}>
+                                ISO 27001 Certificate
+                              </p>
+                              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+                                {form.documents.iso27001Cert.name} ({(form.documents.iso27001Cert.size / 1024).toFixed(2)} KB)
+                              </p>
+                            </div>
+                            <span style={{ fontSize: 16, color: "#16a34a" }}>✓</span>
+                          </div>
+                        )}
+                        
+                        {form.documents.auditReports && (
+                          <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.75rem",
+                            padding: "0.75rem",
+                            background: "white",
+                            borderRadius: 8,
+                            borderLeft: `4px solid ${theme.maroon}`
+                          }}>
+                            <span style={{ fontSize: 18 }}>📄</span>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: theme.text }}>
+                                Audit Reports
+                              </p>
+                              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+                                {form.documents.auditReports.name} ({(form.documents.auditReports.size / 1024).toFixed(2)} KB)
+                              </p>
+                            </div>
+                            <span style={{ fontSize: 16, color: "#16a34a" }}>✓</span>
+                          </div>
+                        )}
+                        
+                        {form.documents.insuranceCert && (
+                          <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.75rem",
+                            padding: "0.75rem",
+                            background: "white",
+                            borderRadius: 8,
+                            borderLeft: `4px solid ${theme.maroon}`
+                          }}>
+                            <span style={{ fontSize: 18 }}>📄</span>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: theme.text }}>
+                                Certificate of Insurance
+                              </p>
+                              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+                                {form.documents.insuranceCert.name} ({(form.documents.insuranceCert.size / 1024).toFixed(2)} KB)
+                              </p>
+                            </div>
+                            <span style={{ fontSize: 16, color: "#16a34a" }}>✓</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ display: "flex", gap: "1rem", marginTop: "1rem" }}>
                     <button
                       type="button"
@@ -746,22 +1188,23 @@ function App() {
                       Back
                     </button>
                     <button
-                      type="submit"
-                      disabled={status === "loading"}
+                      type="button"
+                      onClick={handleUploadDocuments}
+                      disabled={isAnalyzing}
                       style={{
                         padding: "0.75rem",
                         background: theme.maroon,
                         color: "white",
                         border: "none",
                         borderRadius: 8,
-                        cursor: status === "loading" ? "default" : "pointer",
+                        cursor: isAnalyzing ? "default" : "pointer",
                         fontSize: 16,
                         fontWeight: 500,
                         flex: 2,
-                        opacity: status === "loading" ? 0.7 : 1,
+                        opacity: isAnalyzing ? 0.7 : 1,
                       }}
                     >
-                      {status === "loading" ? "Creating..." : "Create Workspace"}
+                      {isAnalyzing ? "Analyzing Documents..." : "Submit for Compliance Review"}
                     </button>
                   </div>
 
