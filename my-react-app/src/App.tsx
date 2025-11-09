@@ -1,4 +1,6 @@
-import React, { useState, FormEvent } from "react";
+import React, { useState } from "react";
+import type { FormEvent } from "react";
+import Dashboard from "./dashboard";
 
 type SignupPayload = {
   firstName: string;
@@ -24,9 +26,9 @@ function App() {
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  function handleChange(
-    e: React.ChangeEvent<HTMLInputElement>
-  ) {
+  const [view, setView] = useState<"signup" | "dashboard">("signup");
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
   }
@@ -36,41 +38,62 @@ function App() {
     setStatus("loading");
     setErrorMessage(null);
 
-    try {
-      // 👉 your backend friend should implement this endpoint
-      const res = await fetch("http://localhost:3000/api/signup", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(form),
-      });
+    // This is the payload your backend friend should expect:
+    const payload: SignupPayload = { ...form };
+    console.log("Signup payload to send to backend:", payload);
 
-      const data = await res.json();
-      console.log("Backend response:", data);
+    // 🔧 TODO: once the backend is ready, replace the fake success below
+    // with a real fetch like this:
+    //
+    // try {
+    //   const res = await fetch("http://localhost:3000/api/signup", {
+    //     method: "POST",
+    //     headers: { "Content-Type": "application/json" },
+    //     body: JSON.stringify(payload),
+    //   });
+    //   const data = await res.json();
+    //   if (!res.ok || data.success === false) {
+    //     setStatus("error");
+    //     setErrorMessage(data.message || "Something went wrong");
+    //     return;
+    //   }
+    //   setStatus("success");
+    //   setView("dashboard");
+    // } catch (err) {
+    //   console.error(err);
+    //   setStatus("error");
+    //   setErrorMessage("Network error. Is the backend running?");
+    // }
 
-      if (!res.ok || data.success === false) {
-        setStatus("error");
-        setErrorMessage(data.message || "Something went wrong");
-        return;
-      }
-
+    // For now, just simulate success so you can keep designing:
+    setTimeout(() => {
       setStatus("success");
-    } catch (err) {
-      console.error(err);
-      setStatus("error");
-      setErrorMessage("Network error. Is the backend running?");
-    }
+      setView("dashboard");
+    }, 500);
   }
 
+  // 🔀 If we're in dashboard mode, show the dashboard instead of signup
+  if (view === "dashboard") {
+    return (
+      <Dashboard
+        companyName={form.companyName}
+        firstName={form.firstName}
+      />
+    );
+  }
+
+  // 📝 Default: signup view
   return (
-    <div className="app-root" style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      background: "#020617"
-    }}>
+    <div
+      className="app-root"
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#020617",
+      }}
+    >
       <div
         className="signup-card"
         style={{
@@ -79,21 +102,48 @@ function App() {
           background: "white",
           borderRadius: 16,
           padding: "2rem",
-          boxShadow: "0 20px 50px rgba(15,23,42,0.4)"
+          boxShadow: "0 20px 50px rgba(15,23,42,0.4)",
         }}
       >
-        <h1 style={{ fontSize: "1.5rem", fontWeight: 600, marginBottom: "0.25rem", color: "#020617" }}>
+        <h1
+          style={{
+            fontSize: "1.5rem",
+            fontWeight: 600,
+            marginBottom: "0.25rem",
+            color: "#020617",
+          }}
+        >
           Create your workspace
         </h1>
-        <p style={{ fontSize: 14, color: "#6b7280", marginBottom: "1.5rem" }}>
-          This signup form will send data to <code>/api/signup</code> for the backend.
+        <p
+          style={{
+            fontSize: 14,
+            color: "#6b7280",
+            marginBottom: "1.5rem",
+          }}
+        >
+          This signup form will eventually send data to{" "}
+          <code>/api/signup</code> for the backend.
         </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.75rem",
+          }}
+        >
           {/* First + last name */}
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: "#4b5563" }}>
+              <label
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: "#4b5563",
+                }}
+              >
                 First name
               </label>
               <input
@@ -107,12 +157,18 @@ function App() {
                   padding: "0.5rem 0.75rem",
                   borderRadius: 8,
                   border: "1px solid #e5e7eb",
-                  fontSize: 14
+                  fontSize: 14,
                 }}
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: "#4b5563" }}>
+              <label
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: "#4b5563",
+                }}
+              >
                 Last name
               </label>
               <input
@@ -126,7 +182,7 @@ function App() {
                   padding: "0.5rem 0.75rem",
                   borderRadius: 8,
                   border: "1px solid #e5e7eb",
-                  fontSize: 14
+                  fontSize: 14,
                 }}
               />
             </div>
@@ -134,7 +190,13 @@ function App() {
 
           {/* Email */}
           <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: "#4b5563" }}>
+            <label
+              style={{
+                fontSize: 12,
+                fontWeight: 500,
+                color: "#4b5563",
+              }}
+            >
               Work email
             </label>
             <input
@@ -150,14 +212,20 @@ function App() {
                 padding: "0.5rem 0.75rem",
                 borderRadius: 8,
                 border: "1px solid #e5e7eb",
-                fontSize: 14
+                fontSize: 14,
               }}
             />
           </div>
 
           {/* Password */}
           <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: "#4b5563" }}>
+            <label
+              style={{
+                fontSize: 12,
+                fontWeight: 500,
+                color: "#4b5563",
+              }}
+            >
               Password
             </label>
             <input
@@ -172,17 +240,29 @@ function App() {
                 padding: "0.5rem 0.75rem",
                 borderRadius: 8,
                 border: "1px solid #e5e7eb",
-                fontSize: 14
+                fontSize: 14,
               }}
             />
-            <p style={{ marginTop: 4, fontSize: 10, color: "#9ca3af" }}>
+            <p
+              style={{
+                marginTop: 4,
+                fontSize: 10,
+                color: "#9ca3af",
+              }}
+            >
               At least 8 characters. Use a mix of letters, numbers, and symbols.
             </p>
           </div>
 
           {/* Company name */}
           <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: "#4b5563" }}>
+            <label
+              style={{
+                fontSize: 12,
+                fontWeight: 500,
+                color: "#4b5563",
+              }}
+            >
               Company name
             </label>
             <input
@@ -197,18 +277,37 @@ function App() {
                 padding: "0.5rem 0.75rem",
                 borderRadius: 8,
                 border: "1px solid #e5e7eb",
-                fontSize: 14
+                fontSize: 14,
               }}
             />
           </div>
 
           {/* Account type radios */}
           <div>
-            <p style={{ fontSize: 12, fontWeight: 500, color: "#4b5563", marginBottom: 4 }}>
+            <p
+              style={{
+                fontSize: 12,
+                fontWeight: 500,
+                color: "#4b5563",
+                marginBottom: 4,
+              }}
+            >
               We manage:
             </p>
-            <div style={{ display: "flex", gap: "0.75rem", fontSize: 12 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div
+              style={{
+                display: "flex",
+                gap: "0.75rem",
+                fontSize: 12,
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
                 <input
                   type="radio"
                   name="accountType"
@@ -218,7 +317,13 @@ function App() {
                 />
                 Vendors
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
                 <input
                   type="radio"
                   name="accountType"
@@ -228,7 +333,13 @@ function App() {
                 />
                 Clients
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
                 <input
                   type="radio"
                   name="accountType"
@@ -263,17 +374,36 @@ function App() {
 
           {/* Status messages */}
           {status === "success" && (
-            <p style={{ marginTop: 8, fontSize: 12, color: "#16a34a" }}>
-              Signup successful! Backend endpoint responded with success.
+            <p
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "#16a34a",
+              }}
+            >
+              Signup successful (simulated). Showing dashboard…
             </p>
           )}
           {status === "error" && (
-            <p style={{ marginTop: 8, fontSize: 12, color: "#dc2626" }}>
+            <p
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "#dc2626",
+              }}
+            >
               {errorMessage || "Something went wrong."}
             </p>
           )}
 
-          <p style={{ marginTop: 8, fontSize: 10, color: "#9ca3af", textAlign: "center" }}>
+          <p
+            style={{
+              marginTop: 8,
+              fontSize: 10,
+              color: "#9ca3af",
+              textAlign: "center",
+            }}
+          >
             By continuing, you agree to our Terms of Service and Privacy Policy.
           </p>
         </form>
