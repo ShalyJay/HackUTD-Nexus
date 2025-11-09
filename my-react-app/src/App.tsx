@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import type { FormEvent } from "react";
 import Dashboard from "./dashboard";
+import AuditWaiting from "./AuditWaiting";
+import { UserService } from "./services/userService";
+import type { AuditResult } from "./services/auditResultService";
 
 type SignupPayload = {
   firstName: string;
@@ -8,7 +11,7 @@ type SignupPayload = {
   email: string;
   password: string;
   companyName: string;
-  accountType: "vendors" | "clients" | "both";
+  accountType: "vendors" | "clients" | "admin";
 };
 
 function App() {
@@ -18,7 +21,7 @@ function App() {
     email: "",
     password: "",
     companyName: "",
-    accountType: "both",
+    accountType: "admin",
   });
 
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
@@ -26,7 +29,10 @@ function App() {
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [view, setView] = useState<"signup" | "dashboard">("signup");
+  const [view, setView] = useState<"signup" | "dashboard" | "audit-waiting">("signup");
+  const [auditResult, setAuditResult] = useState<AuditResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const { name, value } = e.target;
@@ -38,46 +44,112 @@ function App() {
     setStatus("loading");
     setErrorMessage(null);
 
-    // This is the payload your backend friend should expect:
-    const payload: SignupPayload = { ...form };
-    console.log("Signup payload to send to backend:", payload);
+    try {
+      // Create temporary user session (NO Firebase writes yet)
+      const { firstName, lastName, email, password, companyName, accountType } = form;
+      
+      const userData = {
+        firstName,
+        lastName,
+        email,
+        companyName,
+        accountType,
+      };
 
-    // 🔧 TODO: once the backend is ready, replace the fake success below
-    // with a real fetch like this:
-    //
-    // try {
-    //   const res = await fetch("http://localhost:3000/api/signup", {
-    //     method: "POST",
-    //     headers: { "Content-Type": "application/json" },
-    //     body: JSON.stringify(payload),
-    //   });
-    //   const data = await res.json();
-    //   if (!res.ok || data.success === false) {
-    //     setStatus("error");
-    //     setErrorMessage(data.message || "Something went wrong");
-    //     return;
-    //   }
-    //   setStatus("success");
-    //   setView("dashboard");
-    // } catch (err) {
-    //   console.error(err);
-    //   setStatus("error");
-    //   setErrorMessage("Network error. Is the backend running?");
-    // }
-
-    // For now, just simulate success so you can keep designing:
-    setTimeout(() => {
+      console.log("Creating temporary user session with:", userData);
+      const tempUser = await UserService.createTemporaryUserSession(userData, password);
+      console.log("Temporary user session created:", tempUser);
+      
+      // Store temp user ID and user data in state
+      setCurrentUser(tempUser);
+      
       setStatus("success");
+      // Move to audit waiting view (dashboard will trigger compliance check)
+      setView("audit-waiting");
+    } catch (err) {
+      console.error("Error creating temporary account:", err);
+      setStatus("error");
+      
+      let errorMessage = "Failed to create account. Please try again.";
+      
+      if (err instanceof Error) {
+        const errorCode = (err as any).code;
+        const errorMsg = err.message;
+        
+        if (errorCode === 'auth/email-already-in-use') {
+          errorMessage = "This email is already registered. Please use a different email.";
+        } else if (errorCode === 'auth/weak-password') {
+          errorMessage = "Password is too weak. Use at least 6 characters.";
+        } else if (errorCode === 'auth/invalid-email') {
+          errorMessage = "Please enter a valid email address.";
+        } else if (errorCode === 'auth/operation-not-allowed') {
+          errorMessage = "Email/Password authentication is not enabled. Please contact support.";
+        } else if (errorCode === 'auth/network-request-failed') {
+          errorMessage = "Network error. Please check your internet connection.";
+        } else if (errorMsg.includes('PERMISSION_DENIED')) {
+          errorMessage = "Permission denied. Please check Firestore security rules.";
+        } else {
+          errorMessage = `Error: ${errorCode || errorMsg}`;
+        }
+      }
+      
+      setErrorMessage(errorMessage);
+    }
+  }
+
+  const handleCompliancePassed = async (userId: string) => {
+    try {
+      // Create permanent Firebase user after compliance passes
+      console.log("Creating permanent user after compliance pass for:", userId);
+      await UserService.createPermanentUserAfterCompliance(
+        currentUser.userData,
+        currentUser.password
+      );
+      console.log("Permanent user created successfully");
       setView("dashboard");
-    }, 500);
+    } catch (err) {
+      console.error("Error creating permanent account:", err);
+      setErrorMessage("Failed to create account after compliance. Please try again.");
+    }
+  };
+
+  // 🔀 If we're in audit-waiting mode, show the audit waiting screen
+  if (view === "audit-waiting") {
+    // Show dashboard for file upload while waiting for compliance check
+    if (!auditResult) {
+      return (
+        <Dashboard
+          companyName={currentUser?.userData?.companyName || form.companyName}
+          firstName={currentUser?.userData?.firstName || form.firstName}
+          onAuditResult={(result) => {
+            console.log("Audit result received:", result);
+            setAuditResult(result);
+            setIsAnalyzing(false);
+          }}
+          onAnalysisStart={() => {
+            console.log("Analysis starting");
+            setIsAnalyzing(true);
+          }}
+        />
+      );
+    }
+    
+    // Show audit result waiting screen once analysis is done
+    return (
+      <AuditWaiting
+        onCompliancePassed={handleCompliancePassed}
+        auditResult={auditResult}
+        isAnalyzing={isAnalyzing}
+      />
+    );
   }
 
   // 🔀 If we're in dashboard mode, show the dashboard instead of signup
   if (view === "dashboard") {
     return (
       <Dashboard
-        companyName={form.companyName}
-        firstName={form.firstName}
+        companyName={currentUser?.userData?.companyName || form.companyName}
+        firstName={currentUser?.userData?.firstName || form.firstName}
       />
     );
   }
@@ -344,7 +416,7 @@ function App() {
                   type="radio"
                   name="accountType"
                   value="both"
-                  checked={form.accountType === "both"}
+                  checked={form.accountType === "admin"}
                   onChange={handleChange}
                 />
                 Both

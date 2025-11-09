@@ -1,24 +1,90 @@
 import React, { useState } from "react";
+import { ComplianceService } from "./services/complianceService";
+import { AuditService } from "./services/auditService";
+import type { AuditResult } from "./services/auditResultService";
 
 type DashboardProps = {
   companyName: string;
   firstName: string;
+  onAuditResult?: (result: AuditResult) => void;
+  onAnalysisStart?: () => void;
 };
 
-export default function Dashboard({ companyName, firstName }: DashboardProps) {
+export default function Dashboard({ 
+  companyName, 
+  firstName,
+  onAuditResult,
+  onAnalysisStart
+}: DashboardProps) {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     setSelectedFiles(e.target.files);
   }
 
-  function handleFakeUpload() {
-    // this is just for now so the backend can be wired later
+  async function handleUpload() {
     if (!selectedFiles || selectedFiles.length === 0) return;
-    console.log("Files to upload:", Array.from(selectedFiles));
-    alert("In the final version, these files will be uploaded to the backend.");
+
+    try {
+      // Notify parent that analysis is starting
+      onAnalysisStart?.();
+
+      // Convert FileList to array for easier handling
+      const files = Array.from(selectedFiles);
+
+      // Create metadata for each file
+      const metadata = files.map(file => ({
+        type: getDocumentType(file.name),
+      }));
+
+      // Store documents temporarily (these will be deleted if compliance fails)
+      const tempUserId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      await ComplianceService.storeTemporaryDocuments(
+        tempUserId,
+        files,
+        metadata
+      );
+
+      // Check compliance with Gemini analysis
+      const complianceResult = await ComplianceService.checkComplianceAndStore(tempUserId, files);
+
+      // Generate audit report with Gemini summary
+      const auditReport = await AuditService.generateAuditReport(
+        tempUserId,
+        complianceResult,
+        companyName
+      );
+
+      // Create AuditResult object combining the audit report data
+      const auditResult: AuditResult = {
+        tempUserId,
+        status: auditReport.status,
+        complianceScore: complianceResult.score,
+        complianceResult: complianceResult,
+        geminiSummary: auditReport.geminiSummary,
+        requiredActions: auditReport.requiredActions || [],
+        timestamp: auditReport.timestamp
+      };
+
+      // Callback with audit result
+      onAuditResult?.(auditResult);
+    } catch (err) {
+      console.error('Upload failed:', err);
+      const errorMsg = err instanceof Error ? err.message : 'Failed to process documents. Please try again.';
+      alert(errorMsg);
+    }
   }
 
+  // Helper function to determine document type from filename
+  function getDocumentType(filename: string): string {
+    const lowercased = filename.toLowerCase();
+    if (lowercased.includes('cyber') || lowercased.includes('security')) return 'cybersecurity';
+    if (lowercased.includes('criminal') || lowercased.includes('investigation')) return 'criminal';
+    if (lowercased.includes('financial') || lowercased.includes('finance')) return 'financial';
+    if (lowercased.includes('risk')) return 'risk';
+    return 'other';
+  }
   return (
     <div
       style={{
@@ -153,7 +219,7 @@ export default function Dashboard({ companyName, firstName }: DashboardProps) {
           )}
 
           <button
-            onClick={handleFakeUpload}
+            onClick={handleUpload}
             disabled={!selectedFiles || selectedFiles.length === 0}
             style={{
               marginTop: 16,
