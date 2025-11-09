@@ -102,19 +102,101 @@ export class ComplianceService {
   }
 
   // Store documents temporarily for compliance checking
-  static async storeTemporaryDocuments(
-    userId: string,
-    documents: File[],
-    metadata: { type: string }[]
-  ): Promise<ComplianceDocument[]> {
+  static async getAllVendors(): Promise<any[]> {
+    try {
+      const { collection, query, where, getDocs } = await import("firebase/firestore");
+      const { db } = await import("../firebase");
+
+      const vendorsRef = collection(db, "users");
+      const vendorQuery = query(vendorsRef, where("accountType", "==", "vendors"));
+      const snapshot = await getDocs(vendorQuery);
+
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    } catch (err) {
+      console.error("Failed to fetch vendors:", err);
+      return [];
+    }
+  }
+
+  static async getAllClients(): Promise<any[]> {
+    try {
+      const { collection, query, where, getDocs } = await import("firebase/firestore");
+      const { db } = await import("../firebase");
+
+      const clientsRef = collection(db, "users");
+      const clientQuery = query(clientsRef, where("accountType", "==", "clients"));
+      const snapshot = await getDocs(clientQuery);
+
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    } catch (err) {
+      console.error("Failed to fetch clients:", err);
+      return [];
+    }
+  }
+
+  static async getAdminVendors(): Promise<any[]> {
+    try {
+      const { collection, query, where, getDocs } = await import("firebase/firestore");
+      const { db } = await import("../firebase");
+
+      const vendorsRef = collection(db, "users");
+      // Get all vendors, regardless of adminApproved status (fallback to true if field doesn't exist)
+      const vendorQuery = query(vendorsRef, where("accountType", "==", "vendors"));
+      const snapshot = await getDocs(vendorQuery);
+
+      return snapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }))
+        .filter((vendor: any) => vendor.adminApproved !== false); // Show all unless explicitly not approved
+    } catch (err) {
+      console.error("Failed to fetch admin vendors:", err);
+      return [];
+    }
+  }
+
+  static async getAdminClients(): Promise<any[]> {
+    try {
+      const { collection, query, where, getDocs } = await import("firebase/firestore");
+      const { db } = await import("../firebase");
+
+      const clientsRef = collection(db, "users");
+      // Get all clients, regardless of adminApproved status (fallback to true if field doesn't exist)
+      const clientQuery = query(clientsRef, where("accountType", "==", "clients"));
+      const snapshot = await getDocs(clientQuery);
+
+      return snapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }))
+        .filter((client: any) => client.adminApproved !== false); // Show all unless explicitly not approved
+    } catch (err) {
+      console.error("Failed to fetch admin clients:", err);
+      return [];
+    }
+  }
+
+  async storeTemporaryDocuments(
+    tempUserId: string,
+    files: File[],
+    metadata: any[]
+  ): Promise<void> {
     const storedDocs: ComplianceDocument[] = [];
 
-    for (let i = 0; i < documents.length; i++) {
-      const file = documents[i];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
       const type = metadata[i].type;
       
       // Upload to temporary storage
-      const tempStorageRef = ref(storage, `temp/${userId}/${file.name}`);
+      const tempStorageRef = ref(storage, `temp/${tempUserId}/${file.name}`);
       await uploadBytes(tempStorageRef, file);
       const url = await getDownloadURL(tempStorageRef);
 
@@ -127,14 +209,12 @@ export class ComplianceService {
 
       // Store reference in temporary collection
       await setDoc(
-        doc(db, this.TEMP_COLLECTION, `${userId}_${file.name}`),
+        doc(db, ComplianceService.TEMP_COLLECTION, `${tempUserId}_${file.name}`),
         docData
       );
 
       storedDocs.push(docData);
     }
-
-    return storedDocs;
   }
 
   // Check compliance and move to permanent storage if passed

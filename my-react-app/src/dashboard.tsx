@@ -1,62 +1,194 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ComplianceService } from "./services/complianceService";
 import { AuditService } from "./services/auditService";
+import { UserService } from "./services/userService";
 import type { AuditResult } from "./services/auditResultService";
+import { db } from "./firebase";
+import { collection, addDoc, Timestamp } from "firebase/firestore";
 
-type DashboardProps = {
-  companyName: string;
-  firstName: string;
-  onAuditResult?: (result: AuditResult) => void;
-  onAnalysisStart?: () => void;
+const theme = {
+  maroon: "#500000",
+  gold: "#d4af37",
+  warmWhite: "#FFF9F7",
+  text: "#2D2D2D",
+  lightText: "#666666",
+  gray: "#6b7280",
+  lightGray: "#e5e7eb",
+  veryLightGray: "#f3f4f6",
+  green: "#16a34a",
+  red: "#dc2626",
+  orange: "#f97316"
 };
 
+interface Vendor {
+  id: string;
+  companyName: string;
+  status: "Compliant" | "In review" | "Pending AI";
+  lastDocument: string;
+  riskLevel: "High Risk" | "Medium Risk" | "Low Risk";
+  score: number;
+  documents: {
+    soc2: { status: string; date: string };
+    pci: { status: string; date: string };
+    iso: { status: string; date: string };
+  };
+}
+
+interface Client {
+  id: string;
+  companyName: string;
+  totalVendors: number;
+  activeReviews: number;
+  documents: {
+    name: string;
+    status: string;
+    date: string;
+  }[];
+}
+
+interface UserProfile {
+  firstName: string;
+  lastName: string;
+  email: string;
+  companyName: string;
+  accountType: "vendors" | "clients" | "admin";
+  documents: {
+    soc2Cert?: File;
+    iso27001Cert?: File;
+    auditReports?: File;
+    insuranceCert?: File;
+  };
+  lastAuditScore?: number;
+  lastAuditDate?: string;
+}
+
+interface DashboardProps {
+  userProfile: UserProfile;
+  userId: string;
+  onAuditResult?: (result: AuditResult) => void;
+  onAnalysisStart?: () => void;
+}
+
 export default function Dashboard({ 
-  companyName, 
-  firstName,
+  userProfile,
+  userId,
   onAuditResult,
   onAnalysisStart
 }: DashboardProps) {
+  const [selectedTab, setSelectedTab] = useState<"overview" | "profile" | "upload">("overview");
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [complianceStandards, setComplianceStandards] = useState<FileList | null>(null);
+
+  useEffect(() => {
+    // Fetch data based on user role
+    async function fetchData() {
+      try {
+        if (userProfile.accountType === "admin") {
+          // Admin sees all data
+          const [vendorData, clientData] = await Promise.all([
+            ComplianceService.getAllVendors(),
+            ComplianceService.getAllClients()
+          ]);
+          setVendors(vendorData);
+          setClients(clientData);
+        } else if (userProfile.accountType === "vendors") {
+          // Vendors only see admin's client data
+          const clientData = await ComplianceService.getAdminClients();
+          setClients(clientData);
+        } else {
+          // Clients only see admin's vendor data
+          const vendorData = await ComplianceService.getAdminVendors();
+          setVendors(vendorData);
+        }
+      } catch (err) {
+        console.error("Failed to fetch dashboard data:", err);
+      }
+    }
+
+    fetchData();
+  }, [userProfile.accountType]);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     setSelectedFiles(e.target.files);
+  }
+
+  function handleComplianceStandardsChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setComplianceStandards(e.target.files);
+  }
+
+  async function handleUploadComplianceStandards() {
+    if (!complianceStandards || complianceStandards.length === 0) return;
+
+    try {
+      const files = Array.from(complianceStandards);
+      const standardsCollection = collection(db, "compliance_standards");
+      
+      for (const file of files) {
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          const content = event.target?.result as string;
+          await addDoc(standardsCollection, {
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type,
+            uploadedBy: userProfile.email,
+            uploadedAt: Timestamp.now(),
+            content: content,
+            description: `Compliance standard uploaded by ${userProfile.firstName} ${userProfile.lastName}`
+          });
+        };
+        reader.readAsText(file);
+      }
+
+      // Clear the selection after upload
+      setComplianceStandards(null);
+      const fileInput = document.querySelector('input[name="compliance-standards"]') as HTMLInputElement;
+      if (fileInput) fileInput.value = '';
+      
+      alert(`Successfully uploaded ${files.length} compliance standard(s)!`);
+    } catch (err) {
+      console.error('Compliance standards upload failed:', err);
+      const errorMsg = err instanceof Error ? err.message : 'Failed to upload compliance standards.';
+      alert(errorMsg);
+    }
   }
 
   async function handleUpload() {
     if (!selectedFiles || selectedFiles.length === 0) return;
 
     try {
-      // Notify parent that analysis is starting
       onAnalysisStart?.();
-
-      // Convert FileList to array for easier handling
       const files = Array.from(selectedFiles);
 
-      // Create metadata for each file
-      const metadata = files.map(file => ({
-        type: getDocumentType(file.name),
-      }));
-
-      // Store documents temporarily (these will be deleted if compliance fails)
       const tempUserId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-      await ComplianceService.storeTemporaryDocuments(
-        tempUserId,
-        files,
-        metadata
-      );
-
-      // Check compliance with Gemini analysis
       const complianceResult = await ComplianceService.checkComplianceAndStore(tempUserId, files);
-
-      // Generate audit report with Gemini summary
       const auditReport = await AuditService.generateAuditReport(
         tempUserId,
         complianceResult,
-        companyName
+        userProfile.companyName
       );
 
-      // Create AuditResult object combining the audit report data
+      // Save user upload data to Firebase
+      try {
+        await UserService.updateUserWithUpload(userId, {
+          documentNames: files.map(f => f.name),
+          documentCount: files.length,
+          lastUploadDate: Timestamp.now(),
+          uploadedFiles: {
+            soc2: files.find(f => f.name.toLowerCase().includes('soc2'))?.name,
+            iso27001: files.find(f => f.name.toLowerCase().includes('iso'))?.name,
+            auditReports: files.find(f => f.name.toLowerCase().includes('audit'))?.name,
+            insurance: files.find(f => f.name.toLowerCase().includes('insurance'))?.name,
+          }
+        });
+        console.log("User upload data saved to Firebase");
+      } catch (fbErr) {
+        console.error("Failed to save upload data to Firebase:", fbErr);
+        // Don't fail the upload if Firebase save fails
+      }
+
       const auditResult: AuditResult = {
         tempUserId,
         status: auditReport.status,
@@ -67,8 +199,19 @@ export default function Dashboard({
         timestamp: auditReport.timestamp
       };
 
-      // Callback with audit result
-      onAuditResult?.(auditResult);
+      // If callback is provided (from signup flow), use it
+      if (onAuditResult) {
+        onAuditResult(auditResult);
+      } else {
+        // If no callback, show success message in dashboard
+        alert(`Compliance analysis complete!\n\nScore: ${complianceResult.score}%\nStatus: ${auditReport.status}`);
+        setSelectedFiles(null);
+        // Reset file input
+        const fileInputs = document.querySelectorAll('input[type="file"]');
+        fileInputs.forEach(input => {
+          (input as HTMLInputElement).value = '';
+        });
+      }
     } catch (err) {
       console.error('Upload failed:', err);
       const errorMsg = err instanceof Error ? err.message : 'Failed to process documents. Please try again.';
@@ -76,185 +219,783 @@ export default function Dashboard({
     }
   }
 
-  // Helper function to determine document type from filename
-  function getDocumentType(filename: string): string {
-    const lowercased = filename.toLowerCase();
-    if (lowercased.includes('cyber') || lowercased.includes('security')) return 'cybersecurity';
-    if (lowercased.includes('criminal') || lowercased.includes('investigation')) return 'criminal';
-    if (lowercased.includes('financial') || lowercased.includes('finance')) return 'financial';
-    if (lowercased.includes('risk')) return 'risk';
-    return 'other';
-  }
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#020617",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: "1.5rem",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 900,
-          width: "100%",
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
-          gap: "1.5rem",
-          color: "white",
-        }}
-      >
-        {/* Left side: welcome */}
-        <div
-          style={{
-            borderRadius: 16,
-            padding: "1.75rem",
-            background:
-              "radial-gradient(circle at top left, #4f46e5, #0f172a)",
-            boxShadow: "0 18px 40px rgba(15,23,42,0.7)",
-          }}
-        >
-          <p style={{ fontSize: 14, opacity: 0.8 }}>Welcome, {firstName}</p>
-          <h1 style={{ marginTop: 8, fontSize: 24, fontWeight: 600 }}>
-            {companyName || "Your company"} dashboard
-          </h1>
-          <p
-            style={{
-              marginTop: 12,
-              fontSize: 14,
-              opacity: 0.9,
-              maxWidth: 320,
-            }}
-          >
-            To finish setting up your workspace, upload your security and
-            compliance documents. We&apos;ll analyze them and surface risks
-            automatically.
-          </p>
+    <div className="dashboard-root" style={{
+      minHeight: "100vh",
+      width: "100%",
+      background: theme.warmWhite,
+      paddingBottom: "2rem"
+    }}>
+      {/* Header */}
+      <header style={{
+        background: "white",
+        borderBottom: `1px solid ${theme.lightGray}`,
+        padding: "1rem max(1rem, 2vw)",
+        marginBottom: "0.5rem",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
+      }}>
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center"
+        }}>
+          <div>
+            <h1 style={{ 
+              fontSize: "1.75rem", 
+              color: theme.maroon, 
+              marginBottom: "0.25rem",
+              marginTop: 0,
+              fontWeight: 700
+            }}>
+              Nexus One
+            </h1>
+            <p style={{ 
+              color: theme.lightText,
+              fontSize: "0.95rem",
+              margin: 0
+            }}>
+              {userProfile.companyName} • {userProfile.accountType.charAt(0).toUpperCase() + userProfile.accountType.slice(1)}
+            </p>
+          </div>
 
-          <ul style={{ marginTop: 16, fontSize: 13, opacity: 0.9 }}>
-            <li>• SOC 2 reports</li>
-            <li>• ISO 27001 certificates</li>
-            <li>• DPAs, MSAs, and security policies</li>
-          </ul>
+          <div style={{ display: "flex", alignItems: "center", gap: "1.5rem" }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.75rem",
+              padding: "0.75rem 1rem",
+              background: theme.veryLightGray,
+              borderRadius: 8
+            }}>
+              <div style={{ fontSize: "1.2rem", fontWeight: "bold", width: "24px", height: "24px", display: "flex", alignItems: "center", justifyContent: "center", background: theme.maroon, color: "white", borderRadius: "50%" }}>U</div>
+              <div>
+                <p style={{ margin: 0, fontSize: "0.9rem", fontWeight: 500, color: theme.text }}>
+                  {userProfile.firstName} {userProfile.lastName}
+                </p>
+                <p style={{ margin: 0, fontSize: "0.8rem", color: theme.gray }}>
+                  {userProfile.email}
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
+      </header>
 
-        {/* Right side: upload card */}
-        <div
-          style={{
-            background: "white",
-            color: "#020617",
-            borderRadius: 16,
-            padding: "1.75rem",
-            boxShadow: "0 18px 40px rgba(15,23,42,0.5)",
-          }}
-        >
-          <h2
-            style={{
-              fontSize: 18,
-              fontWeight: 600,
-              marginBottom: 4,
-            }}
-          >
-            Complete your profile
-          </h2>
-          <p
-            style={{
-              fontSize: 13,
-              color: "#6b7280",
-              marginBottom: 16,
-            }}
-          >
-            Upload at least one document so your vendor/client profile can be
-            reviewed.
-          </p>
+      {/* Navigation Tabs */}
+      <div style={{
+        background: "white",
+        borderBottom: `2px solid ${theme.lightGray}`,
+        marginBottom: "1rem"
+      }}>
+        <nav style={{
+          display: "flex",
+          gap: "0",
+          padding: "0 max(1rem, 2vw)"
+        }}>
+          {[
+            { id: "overview", label: "Dashboard", icon: "" },
+            { id: "profile", label: "Profile", icon: "" },
+            { id: "upload", label: "Upload Documents", icon: "" }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setSelectedTab(tab.id as any)}
+              style={{
+                padding: "1rem 1.5rem",
+                background: "transparent",
+                border: "none",
+                borderBottom: `3px solid ${selectedTab === tab.id ? theme.maroon : "transparent"}`,
+                color: selectedTab === tab.id ? theme.maroon : theme.gray,
+                fontWeight: selectedTab === tab.id ? 600 : 400,
+                cursor: "pointer",
+                fontSize: "1rem",
+                transition: "all 0.2s ease"
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
-          <label
-            style={{
-              display: "block",
+      {/* Main Content */}
+      <main style={{ 
+        padding: "0 max(1rem, 2vw)"
+      }}>
+        {selectedTab === "overview" && (
+          <div style={{ display: "grid", gap: "1.5rem" }}>
+            {/* Compliance Score Card */}
+            <div style={{
+              background: "white",
               borderRadius: 12,
-              border: "1px dashed #cbd5f5",
               padding: "1.5rem",
-              background: "#f9fafb",
-              textAlign: "center",
-              cursor: "pointer",
-            }}
-          >
-            <p style={{ fontSize: 13, fontWeight: 500, color: "#4f46e5" }}>
-              Click to choose files
-            </p>
-            <p style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>
-              PDF, DOCX, or TXT · You can select multiple files
-            </p>
-            <input
-              type="file"
-              multiple
-              onChange={handleFileChange}
-              style={{ display: "none" }}
-            />
-          </label>
+              boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+              borderLeft: `6px solid ${theme.maroon}`
+            }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem" }}>
+                <div>
+                  <p style={{ 
+                    color: theme.lightText, 
+                    fontSize: "0.95rem",
+                    margin: "0 0 0.5rem 0",
+                    fontWeight: 500
+                  }}>
+                    Overall Compliance Score
+                  </p>
+                  <div style={{
+                    fontSize: "3.5rem",
+                    fontWeight: 700,
+                    color: theme.maroon,
+                    marginBottom: "1rem"
+                  }}>
+                    82%
+                  </div>
+                  <div style={{
+                    fontSize: "0.9rem",
+                    color: theme.red,
+                    fontWeight: 500
+                  }}>
+                    ▼ 50% change in last 30 days
+                  </div>
+                </div>
 
-          {selectedFiles && selectedFiles.length > 0 && (
-            <div style={{ marginTop: 16, fontSize: 12 }}>
-              <p style={{ fontWeight: 500, marginBottom: 4 }}>Selected files:</p>
-              <ul
+                <div>
+                  <p style={{ 
+                    color: theme.lightText, 
+                    fontSize: "0.95rem",
+                    margin: "0 0 1rem 0",
+                    fontWeight: 500
+                  }}>
+                    Risk Overview
+                  </p>
+                  <div style={{ display: "grid", gap: "1rem" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
+                        <span style={{ fontSize: "0.85rem", fontWeight: 500, color: theme.text }}>Vendors</span>
+                      </div>
+                      <div style={{
+                        width: "100%",
+                        height: 10,
+                        background: theme.lightGray,
+                        borderRadius: 4,
+                        overflow: "hidden"
+                      }}>
+                        <div style={{
+                          width: "60%",
+                          height: "100%",
+                          background: `linear-gradient(to right, ${theme.green}, ${theme.orange}, ${theme.red})`
+                        }} />
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
+                        <span style={{ fontSize: "0.85rem", fontWeight: 500, color: theme.text }}>Clients</span>
+                      </div>
+                      <div style={{
+                        width: "100%",
+                        height: 10,
+                        background: theme.lightGray,
+                        borderRadius: 4,
+                        overflow: "hidden"
+                      }}>
+                        <div style={{
+                          width: "85%",
+                          height: "100%",
+                          background: theme.green
+                        }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Vendors Section */}
+            {userProfile.accountType !== "vendors" && (
+              <div>
+                <h2 style={{ 
+                  fontSize: "1.5rem", 
+                  color: theme.maroon,
+                  marginBottom: "0.75rem",
+                  marginTop: 0
+                }}>
+                  Vendors
+                </h2>
+                <div style={{ display: "grid", gap: "0.75rem" }}>
+                  {vendors.length > 0 ? (
+                    vendors.map(vendor => (
+                      <div 
+                        key={vendor.id} 
+                        style={{
+                          background: "white",
+                          padding: "1.25rem",
+                          borderRadius: 12,
+                          boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "2rem",
+                          borderLeft: `4px solid ${vendor.riskLevel === "High Risk" ? theme.red : vendor.riskLevel === "Medium Risk" ? theme.orange : theme.green}`
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <h4 style={{ margin: "0 0 0.25rem 0", color: theme.text, fontSize: "1rem" }}>
+                            {vendor.companyName}
+                          </h4>
+                          <p style={{ margin: 0, color: theme.gray, fontSize: "0.9rem" }}>
+                            Status: <strong>{vendor?.status || "active"}</strong>
+                          </p>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ margin: "0 0 0.25rem 0", color: theme.lightText, fontSize: "0.85rem", fontWeight: 500 }}>
+                            Compliance
+                          </p>
+                          <p style={{ margin: 0, color: theme.text, fontWeight: 600 }}>
+                            {vendor?.riskLevel || "Pending"}
+                          </p>
+                          <p style={{ margin: "0.25rem 0 0 0", color: theme.gray, fontSize: "0.85rem" }}>
+                            {vendor?.documents?.soc2?.date || "Not reviewed"}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: "right", minWidth: "fit-content" }}>
+                          <div style={{
+                            display: "inline-block",
+                            padding: "0.5rem 1rem",
+                            background: (vendor?.score || 0) >= 80 ? `${theme.green}15` : (vendor?.score || 0) >= 60 ? `${theme.orange}15` : `${theme.red}15`,
+                            color: (vendor?.score || 0) >= 80 ? theme.green : (vendor?.score || 0) >= 60 ? theme.orange : theme.red,
+                            borderRadius: 6,
+                            fontWeight: 700,
+                            fontSize: "0.95rem"
+                          }}>
+                            {vendor?.score || 0}%
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{
+                      background: "white",
+                      padding: "2rem",
+                      borderRadius: 12,
+                      textAlign: "center",
+                      color: theme.gray
+                    }}>
+                      No vendors to display
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Clients Section */}
+            {userProfile.accountType !== "clients" && (
+              <div>
+                <h2 style={{ 
+                  fontSize: "1.5rem", 
+                  color: theme.maroon,
+                  marginBottom: "0.75rem",
+                  marginTop: 0
+                }}>
+                  Clients
+                </h2>
+                <div style={{ display: "grid", gap: "0.75rem" }}>
+                  {clients.length > 0 ? (
+                    clients.map(client => (
+                      <div 
+                        key={client.id}
+                        style={{
+                          background: "white",
+                          padding: "1.25rem",
+                          borderRadius: 12,
+                          boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "2rem",
+                          borderLeft: `4px solid ${theme.gold}`
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <h4 style={{ margin: "0 0 0.25rem 0", color: theme.text, fontSize: "1rem" }}>
+                            {client.companyName}
+                          </h4>
+                          <p style={{ margin: 0, color: theme.gray, fontSize: "0.9rem" }}>
+                            {client.totalVendors} vendors • {client.activeReviews} active reviews
+                          </p>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ margin: "0 0 0.25rem 0", color: theme.lightText, fontSize: "0.85rem", fontWeight: 500 }}>
+                            Latest Document
+                          </p>
+                          <p style={{ margin: 0, color: theme.text, fontWeight: 500, fontSize: "0.9rem" }}>
+                            {Array.isArray(client.documents) ? (client.documents[0]?.name || "—") : "—"}
+                          </p>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ margin: "0 0 0.25rem 0", color: theme.lightText, fontSize: "0.85rem", fontWeight: 500 }}>
+                            Status
+                          </p>
+                          <p style={{ margin: 0, color: theme.text, fontWeight: 500 }}>
+                            {Array.isArray(client.documents) ? (client.documents[0]?.status || "—") : "—"}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: "right", minWidth: "fit-content" }}>
+                          <span style={{ fontSize: "1.2rem" }}>→</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{
+                      background: "white",
+                      padding: "2rem",
+                      borderRadius: 12,
+                      textAlign: "center",
+                      color: theme.gray
+                    }}>
+                      No clients to display
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {selectedTab === "profile" && (
+          <div style={{
+            background: "white",
+            borderRadius: 12,
+            padding: "2rem",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.08)"
+          }}>
+            <h2 style={{ 
+              fontSize: "1.5rem", 
+              color: theme.maroon,
+              marginBottom: "1.5rem",
+              marginTop: 0
+            }}>
+              Company Profile
+            </h2>
+            
+            <div style={{ display: "grid", gap: "1.5rem" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem" }}>
+                <div>
+                  <p style={{ color: theme.lightText, fontSize: "0.9rem", fontWeight: 500, margin: "0 0 0.5rem 0" }}>
+                    Company Name
+                  </p>
+                  <p style={{ color: theme.text, fontSize: "1rem", fontWeight: 500, margin: 0 }}>
+                    {userProfile.companyName}
+                  </p>
+                </div>
+
+                <div>
+                  <p style={{ color: theme.lightText, fontSize: "0.9rem", fontWeight: 500, margin: "0 0 0.5rem 0" }}>
+                    Account Type
+                  </p>
+                  <p style={{ color: theme.text, fontSize: "1rem", fontWeight: 500, margin: 0, textTransform: "capitalize" }}>
+                    {userProfile.accountType}
+                  </p>
+                </div>
+
+                <div>
+                  <p style={{ color: theme.lightText, fontSize: "0.9rem", fontWeight: 500, margin: "0 0 0.5rem 0" }}>
+                    Contact Name
+                  </p>
+                  <p style={{ color: theme.text, fontSize: "1rem", fontWeight: 500, margin: 0 }}>
+                    {userProfile.firstName} {userProfile.lastName}
+                  </p>
+                </div>
+
+                <div>
+                  <p style={{ color: theme.lightText, fontSize: "0.9rem", fontWeight: 500, margin: "0 0 0.5rem 0" }}>
+                    Email Address
+                  </p>
+                  <p style={{ color: theme.text, fontSize: "1rem", fontWeight: 500, margin: 0 }}>
+                    {userProfile.email}
+                  </p>
+                </div>
+              </div>
+
+              <hr style={{ border: "none", borderTop: `1px solid ${theme.lightGray}`, margin: "1rem 0" }} />
+
+              <div>
+                <h3 style={{ 
+                  fontSize: "1.1rem", 
+                  color: theme.maroon,
+                  marginTop: 0,
+                  marginBottom: "1rem"
+                }}>
+                  Documents
+                </h3>
+                <div style={{ display: "grid", gap: "0.75rem" }}>
+                  {Object.entries(userProfile.documents).map(([key, file]) => (
+                    <div 
+                      key={key} 
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "1rem",
+                        background: theme.veryLightGray,
+                        borderRadius: 8,
+                        gap: "1rem",
+                        borderLeft: `3px solid ${file ? theme.green : theme.lightGray}`
+                      }}
+                    >
+                      <span style={{ fontSize: 18, color: theme.maroon, fontWeight: "bold" }}>D</span>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ margin: 0, color: theme.text, fontWeight: 500, fontSize: "0.95rem" }}>
+                          {key.replace(/([A-Z])/g, ' $1').trim()}
+                        </p>
+                        <p style={{ margin: "0.25rem 0 0 0", color: theme.gray, fontSize: "0.85rem" }}>
+                          {file?.name || "Not uploaded"}
+                        </p>
+                      </div>
+                      {file && (
+                        <span style={{ color: theme.green, fontSize: "1.2rem", fontWeight: "bold" }}>Ready</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <hr style={{ border: "none", borderTop: `1px solid ${theme.lightGray}`, margin: "1rem 0" }} />
+
+              <div>
+                <h3 style={{ 
+                  fontSize: "1.1rem", 
+                  color: theme.maroon,
+                  marginTop: 0,
+                  marginBottom: "1rem"
+                }}>
+                  Compliance Validation
+                </h3>
+                <div style={{ display: "grid", gap: "1rem" }}>
+                  <div style={{
+                    background: theme.veryLightGray,
+                    padding: "1.25rem",
+                    borderRadius: 8,
+                    borderLeft: `4px solid ${theme.green}`
+                  }}>
+                    <p style={{ margin: "0 0 0.5rem 0", color: theme.text, fontWeight: 600, fontSize: "0.95rem" }}>
+                      Standards Validation
+                    </p>
+                    <p style={{ margin: 0, color: theme.lightText, fontSize: "0.85rem" }}>
+                      Your documents are validated against admin-provided compliance standards (SOC2, ISO27001, HIPAA, PCI-DSS, etc.)
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {userProfile.lastAuditScore && (
+                <>
+                  <hr style={{ border: "none", borderTop: `1px solid ${theme.lightGray}`, margin: "1rem 0" }} />
+                  <div>
+                    <h3 style={{ 
+                      fontSize: "1.1rem", 
+                      color: theme.maroon,
+                      marginTop: 0,
+                      marginBottom: "1rem"
+                    }}>
+                      Latest Audit Results
+                    </h3>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem" }}>
+                      <div>
+                        <p style={{ margin: 0, color: theme.gray, fontSize: "0.9rem" }}>Compliance Score</p>
+                        <p style={{ margin: "0.5rem 0 0 0", fontSize: "2rem", fontWeight: 700, color: theme.maroon }}>
+                          {userProfile.lastAuditScore}%
+                        </p>
+                      </div>
+                      <div>
+                        <p style={{ margin: 0, color: theme.gray, fontSize: "0.9rem" }}>Last Updated</p>
+                        <p style={{ margin: "0.5rem 0 0 0", fontSize: "1rem", fontWeight: 500, color: theme.text }}>
+                          {userProfile.lastAuditDate}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {selectedTab === "upload" && (
+          <div style={{
+            background: "white",
+            borderRadius: 12,
+            padding: "2rem",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.08)"
+          }}>
+            {userProfile.accountType === "admin" && (
+              <>
+                <h2 style={{ 
+                  fontSize: "1.5rem", 
+                  color: theme.maroon,
+                  marginBottom: "1.5rem",
+                  marginTop: 0
+                }}>
+                  Manage Compliance Standards
+                </h2>
+                
+                <div style={{ display: "grid", gap: "1.5rem" }}>
+                  <div style={{
+                    background: theme.veryLightGray,
+                    padding: "1.5rem",
+                    borderRadius: 8,
+                    borderLeft: `4px solid ${theme.maroon}`
+                  }}>
+                    <p style={{ 
+                      color: theme.text, 
+                      fontSize: "0.95rem",
+                      fontWeight: 500,
+                      margin: "0 0 0.5rem 0"
+                    }}>
+                      Admin Compliance Standards
+                    </p>
+                    <p style={{ 
+                      color: theme.lightText, 
+                      fontSize: "0.9rem",
+                      margin: 0
+                    }}>
+                      Upload SOC2, ISO27001, HIPAA, PCI-DSS and other compliance frameworks. These will be used to validate all user submissions.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label style={{ 
+                      display: "block", 
+                      marginBottom: "1rem", 
+                      color: theme.text,
+                      fontWeight: 600,
+                      fontSize: "0.95rem"
+                    }}>
+                      Upload Compliance Standards
+                    </label>
+                    <input
+                      type="file"
+                      multiple
+                      name="compliance-standards"
+                      onChange={handleComplianceStandardsChange}
+                      accept=".pdf,.doc,.docx,.txt"
+                      style={{
+                        width: "100%",
+                        padding: "2rem",
+                        border: `2px dashed ${theme.maroon}`,
+                        borderRadius: 8,
+                        textAlign: "center",
+                        cursor: "pointer",
+                        background: theme.veryLightGray,
+                        color: theme.text,
+                        fontWeight: 500
+                      }}
+                    />
+                    <p style={{ 
+                      margin: "1rem 0 0 0", 
+                      color: theme.gray, 
+                      fontSize: "0.85rem",
+                      textAlign: "center"
+                    }}>
+                      Supported formats: PDF, DOC, DOCX, TXT
+                    </p>
+                  </div>
+
+                  {complianceStandards && complianceStandards.length > 0 && (
+                    <div style={{
+                      background: theme.veryLightGray,
+                      padding: "1.5rem",
+                      borderRadius: 8,
+                      borderLeft: `4px solid ${theme.green}`
+                    }}>
+                      <h3 style={{ 
+                        margin: "0 0 1rem 0", 
+                        color: theme.green,
+                        fontSize: "1rem",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem"
+                      }}>
+                        Ready for Upload
+                      </h3>
+                      <div style={{ display: "grid", gap: "0.75rem" }}>
+                        {Array.from(complianceStandards).map((file, idx) => (
+                          <div 
+                            key={idx}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              padding: "0.75rem",
+                              background: "white",
+                              borderRadius: 6,
+                              gap: "0.75rem"
+                            }}
+                          >
+                            <span style={{ color: theme.maroon, fontWeight: "bold" }}>D</span>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, color: theme.text, fontWeight: 500, fontSize: "0.9rem" }}>
+                                {file.name}
+                              </p>
+                              <p style={{ margin: "0.25rem 0 0 0", color: theme.gray, fontSize: "0.8rem" }}>
+                                {(file.size / 1024).toFixed(2)} KB
+                              </p>
+                            </div>
+                            <span style={{ color: theme.green, fontWeight: "bold" }}>Ready</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleUploadComplianceStandards}
+                    disabled={!complianceStandards || complianceStandards.length === 0}
+                    style={{
+                      padding: "1rem",
+                      background: !complianceStandards || complianceStandards.length === 0 ? theme.lightGray : theme.maroon,
+                      color: "white",
+                      border: "none",
+                      borderRadius: 8,
+                      cursor: !complianceStandards || complianceStandards.length === 0 ? "default" : "pointer",
+                      fontSize: "1rem",
+                      fontWeight: 600,
+                      opacity: !complianceStandards || complianceStandards.length === 0 ? 0.6 : 1,
+                      transition: "all 0.2s ease"
+                    }}
+                  >
+                    Upload Compliance Standards
+                  </button>
+
+                  <hr style={{ border: "none", borderTop: `2px solid ${theme.lightGray}`, margin: "1rem 0" }} />
+
+                  <h3 style={{ 
+                    fontSize: "1.2rem", 
+                    color: theme.maroon,
+                    marginTop: "1.5rem",
+                    marginBottom: "1rem"
+                  }}>
+                    Your Organization Documents
+                  </h3>
+                </div>
+              </>
+            )}
+
+            {userProfile.accountType === "admin" && (
+              <div style={{ display: "grid", gap: "1.5rem" }}>
+                <p style={{ 
+                  color: theme.lightText, 
+                  fontSize: "0.9rem",
+                  margin: 0
+                }}>
+                  Upload your organization's compliance documents to validate against the standards you manage.
+                </p>
+              </div>
+            )}
+            
+            <div style={{ display: "grid", gap: "1.5rem" }}>
+              <div>
+                <label style={{ 
+                  display: "block", 
+                  marginBottom: "1rem", 
+                  color: theme.text,
+                  fontWeight: 600,
+                  fontSize: "0.95rem"
+                }}>
+                  {userProfile.accountType === "admin" ? "Upload Organization Documents" : "Upload Documents for Compliance Review"}
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  onChange={handleFileChange}
+                  accept=".pdf,.doc,.docx"
+                  style={{
+                    width: "100%",
+                    padding: "2rem",
+                    border: `2px dashed ${theme.maroon}`,
+                    borderRadius: 8,
+                    textAlign: "center",
+                    cursor: "pointer",
+                    background: theme.veryLightGray,
+                    color: theme.text,
+                    fontWeight: 500
+                  }}
+                />
+                <p style={{ 
+                  margin: "1rem 0 0 0", 
+                  color: theme.gray, 
+                  fontSize: "0.85rem",
+                  textAlign: "center"
+                }}>
+                  Supported formats: PDF, DOC, DOCX
+                </p>
+              </div>
+
+              {selectedFiles && selectedFiles.length > 0 && (
+                <div style={{
+                  background: theme.veryLightGray,
+                  padding: "1.5rem",
+                  borderRadius: 8,
+                  borderLeft: `4px solid ${theme.green}`
+                }}>
+                  <h3 style={{ 
+                    margin: "0 0 1rem 0", 
+                    color: theme.green,
+                    fontSize: "1rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem"
+                  }}>
+                    Ready for Review
+                  </h3>
+                  <div style={{ display: "grid", gap: "0.75rem" }}>
+                    {Array.from(selectedFiles).map((file, idx) => (
+                      <div 
+                        key={idx}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          padding: "0.75rem",
+                          background: "white",
+                          borderRadius: 6,
+                          gap: "0.75rem"
+                        }}
+                      >
+                        <span style={{ color: theme.maroon, fontWeight: "bold" }}>D</span>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ margin: 0, color: theme.text, fontWeight: 500, fontSize: "0.9rem" }}>
+                            {file.name}
+                          </p>
+                          <p style={{ margin: "0.25rem 0 0 0", color: theme.gray, fontSize: "0.8rem" }}>
+                            {(file.size / 1024).toFixed(2)} KB
+                          </p>
+                        </div>
+                        <span style={{ color: theme.green, fontWeight: "bold" }}>Ready</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={handleUpload}
+                disabled={!selectedFiles || selectedFiles.length === 0}
                 style={{
-                  maxHeight: 120,
-                  overflowY: "auto",
-                  paddingLeft: 16,
-                  listStyle: "disc",
+                  padding: "1rem",
+                  background: !selectedFiles || selectedFiles.length === 0 ? theme.lightGray : theme.maroon,
+                  color: "white",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: !selectedFiles || selectedFiles.length === 0 ? "default" : "pointer",
+                  fontSize: "1rem",
+                  fontWeight: 600,
+                  opacity: !selectedFiles || selectedFiles.length === 0 ? 0.6 : 1,
+                  transition: "all 0.2s ease"
                 }}
               >
-                {Array.from(selectedFiles).map((file) => (
-                  <li key={file.name}>
-                    {file.name}{" "}
-                    <span style={{ color: "#9ca3af" }}>
-                      ({Math.round(file.size / 1024)} KB)
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                Upload & Run Compliance Check
+              </button>
             </div>
-          )}
-
-          <button
-            onClick={handleUpload}
-            disabled={!selectedFiles || selectedFiles.length === 0}
-            style={{
-              marginTop: 16,
-              width: "100%",
-              padding: "0.6rem 0.75rem",
-              borderRadius: 9999,
-              border: "none",
-              fontSize: 14,
-              fontWeight: 500,
-              color: "white",
-              background:
-                !selectedFiles || selectedFiles.length === 0
-                  ? "#9ca3af"
-                  : "#4f46e5",
-              cursor:
-                !selectedFiles || selectedFiles.length === 0
-                  ? "default"
-                  : "pointer",
-            }}
-          >
-            Upload and continue
-          </button>
-
-          <p
-            style={{
-              marginTop: 10,
-              fontSize: 11,
-              color: "#9ca3af",
-            }}
-          >
-            (For now this just logs files to the console so the backend can later
-            connect the real upload endpoint.)
-          </p>
-        </div>
-      </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }

@@ -114,4 +114,39 @@ export class UserService {
     if (!profile) throw new Error('User profile not found');
     return profile;
   }
+
+  // Update user profile with documents and last upload info
+  static async updateUserWithUpload(
+    userId: string, 
+    uploadData: {
+      documentNames: string[];
+      documentCount: number;
+      lastUploadDate: Timestamp | Date;
+      uploadedFiles?: {
+        soc2?: string;
+        iso27001?: string;
+        auditReports?: string;
+        insurance?: string;
+      };
+    }
+  ): Promise<void> {
+    try {
+      console.log("Updating user profile with upload info:", userId);
+      
+      const userRef = doc(db, this.USERS_COLLECTION, userId);
+      
+      await setDoc(userRef, {
+        lastUploadedDocuments: uploadData.documentNames,
+        documentCount: uploadData.documentCount,
+        lastUploadDate: uploadData.lastUploadDate,
+        uploadedFiles: uploadData.uploadedFiles || {},
+        lastUpdated: Timestamp.now()
+      }, { merge: true });
+      
+      console.log("User profile updated with upload information");
+    } catch (error) {
+      console.error("Error updating user profile with upload:", error);
+      throw error;
+    }
+  }
 }

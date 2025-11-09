@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type { FormEvent, ChangeEvent } from "react";
 import Dashboard from "./dashboard";
 import AuditWaiting from "./AuditWaiting";
@@ -6,6 +6,7 @@ import { UserService } from "./services/userService";
 import type { AuditResult } from "./services/auditResultService";
 import { ComplianceService } from "./services/complianceService";
 import { AuditService } from "./services/auditService";
+import { seedFirebase } from "./seedFirebase";
 import { AnimatePresence, motion } from "framer-motion";
 
 // Theme configuration
@@ -14,43 +15,6 @@ const theme = {
   gold: "#d4af37",
   warmWhite: "#FFF9F7",
   text: "#2D2D2D"
-};
-
-// Shared styles
-const styles = {
-  input: {
-    width: "100%",
-    padding: "0.9rem",
-    border: "1px solid #E5E7EB",
-    borderRadius: 12,
-    background: "white",
-    color: theme.text,
-    fontSize: "15px",
-    transition: "all 0.2s ease",
-    outline: "none"
-  },
-  label: {
-    color: theme.text,
-    fontSize: "13px",
-    marginBottom: "6px",
-    display: "block",
-    fontWeight: 500
-  },
-  radioContainer: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "1rem"
-  },
-  radioLabel: (isSelected: boolean) => ({
-    display: "flex",
-    alignItems: "center",
-    padding: "0.7rem 1rem",
-    border: `2px solid ${isSelected ? theme.maroon : "#E5E7EB"}`,
-    borderRadius: 12,
-    cursor: "pointer",
-    transition: "all 0.2s ease",
-    background: isSelected ? `${theme.maroon}08` : "white"
-  })
 };
 
 type SignupPayload = {
@@ -81,27 +45,6 @@ const ADMIN_USER = {
   lastName: "User",
   companyName: "HackUTD-Nexus",
   accountType: "admin" as const
-};
-
-// Shared styles
-const inputStyles = {
-  width: "100%",
-  padding: "0.9rem",
-  border: "1px solid #E5E7EB",
-  borderRadius: 12,
-  background: "white",
-  color: "#2D2D2D",
-  fontSize: "15px",
-  transition: "all 0.2s ease",
-  outline: "none"
-};
-
-const labelStyles = {
-  fontSize: 13,
-  marginBottom: 6,
-  display: "block",
-  fontWeight: 500,
-  color: "#2D2D2D"
 };
 
 function App() {
@@ -136,6 +79,24 @@ function App() {
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   const [step, setStep] = useState<1 | 2>(1);
+
+  // Seed Firebase on first load
+  useEffect(() => {
+    const hasSeeded = localStorage.getItem("firebaseSeeded");
+    if (!hasSeeded) {
+      console.log("First load detected, seeding Firebase with mock data...");
+      seedFirebase()
+        .then(() => {
+          localStorage.setItem("firebaseSeeded", "true");
+          console.log("Firebase seeding completed");
+        })
+        .catch((err) => {
+          console.error("Failed to seed Firebase:", err);
+          // Still mark as seeded to avoid repeated attempts
+          localStorage.setItem("firebaseSeeded", "true");
+        });
+    }
+  }, []);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const { name, value, type, files } = e.target;
@@ -247,17 +208,35 @@ function App() {
       if (email === ADMIN_USER.email && password === ADMIN_USER.password) {
         console.log("Admin login successful");
         
+        // Store/update admin data in Firebase
+        const { db } = await import("./firebase");
+        const { doc, setDoc, Timestamp } = await import("firebase/firestore");
+        
+        const adminUserId = "admin_001";
+        const now = Timestamp.now();
+        
+        const adminUserData = {
+          userId: adminUserId,
+          firstName: ADMIN_USER.firstName,
+          lastName: ADMIN_USER.lastName,
+          email: ADMIN_USER.email,
+          companyName: ADMIN_USER.companyName,
+          accountType: ADMIN_USER.accountType,
+          status: "active",
+          onboardingComplete: true,
+          createdAt: now,
+          lastUpdated: now
+        };
+        
+        // Save admin to Firebase
+        await setDoc(doc(db, "users", adminUserId), adminUserData);
+        console.log("Admin user data stored in Firebase");
+        
         // Create admin user session
         const adminUser = {
-          userId: "admin_001",
+          userId: adminUserId,
           password: password,
-          userData: {
-            firstName: ADMIN_USER.firstName,
-            lastName: ADMIN_USER.lastName,
-            email: ADMIN_USER.email,
-            companyName: ADMIN_USER.companyName,
-            accountType: ADMIN_USER.accountType,
-          }
+          userData: adminUserData
         };
 
         setCurrentUser(adminUser);
@@ -338,19 +317,8 @@ function App() {
       setIsAnalyzing(true);
       setErrorMessage(null);
 
-      // Create metadata for each file
-      const metadata = uploadedFiles.map(file => ({
-        type: getDocumentType(file.name),
-      }));
-
-      // Store documents temporarily
+      // Store documents and check compliance
       const tempUserId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-      await ComplianceService.storeTemporaryDocuments(
-        tempUserId,
-        uploadedFiles,
-        metadata
-      );
 
       // Check compliance with Gemini analysis
       const complianceResult = await ComplianceService.checkComplianceAndStore(tempUserId, uploadedFiles);
@@ -385,16 +353,6 @@ function App() {
     }
   }
 
-  // Helper function to determine document type from filename
-  function getDocumentType(filename: string): string {
-    const lowercased = filename.toLowerCase();
-    if (lowercased.includes('soc')) return 'soc2';
-    if (lowercased.includes('iso')) return 'iso27001';
-    if (lowercased.includes('audit')) return 'audit';
-    if (lowercased.includes('insurance')) return 'insurance';
-    return 'other';
-  }
-
   // 🔀 If we're in audit-waiting mode, show the audit result screen
   if (view === "audit-waiting") {
     // Show audit result waiting screen with compliance analysis results
@@ -412,8 +370,22 @@ function App() {
   if (view === "dashboard") {
     return (
       <Dashboard
-        companyName={currentUser?.userData?.companyName || form.companyName}
-        firstName={currentUser?.userData?.firstName || form.firstName}
+        userId={currentUser?.userId || "unknown"}
+        userProfile={{
+          firstName: currentUser?.userData?.firstName || form.firstName,
+          lastName: currentUser?.userData?.lastName || form.lastName,
+          email: currentUser?.userData?.email || form.email,
+          companyName: currentUser?.userData?.companyName || form.companyName,
+          accountType: currentUser?.userData?.accountType || form.accountType,
+          documents: {
+            soc2Cert: form.documents.soc2Report || undefined,
+            iso27001Cert: form.documents.iso27001Cert || undefined,
+            auditReports: form.documents.auditReports || undefined,
+            insuranceCert: form.documents.insuranceCert || undefined
+          },
+          lastAuditScore: currentUser?.userData?.lastAuditScore,
+          lastAuditDate: currentUser?.userData?.lastAuditDate
+        }}
       />
     );
   }
