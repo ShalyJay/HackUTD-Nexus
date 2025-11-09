@@ -1,9 +1,55 @@
 import React, { useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ChangeEvent } from "react";
 import Dashboard from "./dashboard";
 import AuditWaiting from "./AuditWaiting";
 import { UserService } from "./services/userService";
 import type { AuditResult } from "./services/auditResultService";
+import { AnimatePresence, motion } from "framer-motion";
+
+// Theme configuration
+const theme = {
+  maroon: "#500000",
+  gold: "#d4af37",
+  warmWhite: "#FFF9F7",
+  text: "#2D2D2D"
+};
+
+// Shared styles
+const styles = {
+  input: {
+    width: "100%",
+    padding: "0.9rem",
+    border: "1px solid #E5E7EB",
+    borderRadius: 12,
+    background: "white",
+    color: theme.text,
+    fontSize: "15px",
+    transition: "all 0.2s ease",
+    outline: "none"
+  },
+  label: {
+    color: theme.text,
+    fontSize: "13px",
+    marginBottom: "6px",
+    display: "block",
+    fontWeight: 500
+  },
+  radioContainer: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "1rem"
+  },
+  radioLabel: (isSelected: boolean) => ({
+    display: "flex",
+    alignItems: "center",
+    padding: "0.7rem 1rem",
+    border: `2px solid ${isSelected ? theme.maroon : "#E5E7EB"}`,
+    borderRadius: 12,
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    background: isSelected ? `${theme.maroon}08` : "white"
+  })
+};
 
 type SignupPayload = {
   firstName: string;
@@ -12,6 +58,33 @@ type SignupPayload = {
   password: string;
   companyName: string;
   accountType: "vendors" | "clients" | "admin";
+  documents: {
+    soc2Report: File | null;
+    iso27001Cert: File | null;
+    auditReports: File | null;
+    insuranceCert: File | null;
+  };
+};
+
+// Shared styles
+const inputStyles = {
+  width: "100%",
+  padding: "0.9rem",
+  border: "1px solid #E5E7EB",
+  borderRadius: 12,
+  background: "white",
+  color: "#2D2D2D",
+  fontSize: "15px",
+  transition: "all 0.2s ease",
+  outline: "none"
+};
+
+const labelStyles = {
+  fontSize: 13,
+  marginBottom: 6,
+  display: "block",
+  fontWeight: 500,
+  color: "#2D2D2D"
 };
 
 function App() {
@@ -22,6 +95,12 @@ function App() {
     password: "",
     companyName: "",
     accountType: "admin",
+    documents: {
+      soc2Report: null,
+      iso27001Cert: null,
+      auditReports: null,
+      insuranceCert: null
+    }
   });
 
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
@@ -34,9 +113,23 @@ function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
+  const [step, setStep] = useState<1 | 2>(1);
+
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+    const { name, value, type, files } = e.target;
+    
+    if (type === 'file' && files) {
+      const documentType = name as keyof SignupPayload['documents'];
+      setForm(prev => ({
+        ...prev,
+        documents: {
+          ...prev.documents,
+          [documentType]: files[0]
+        }
+      }));
+    } else {
+      setForm(prev => ({ ...prev, [name]: value }));
+    }
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -155,333 +248,538 @@ function App() {
   }
 
   // 📝 Default: signup view
+  // Don't show signup form if we're in other views
+  if (view !== "signup") {
+    return null;
+  }
+
   return (
     <div
       className="app-root"
       style={{
         minHeight: "100vh",
+        width: "100vw",
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        background: "#020617",
+        justifyContent: "flex-start",
+        paddingLeft: "8%",
+        background: theme.warmWhite,
+        position: "relative",
+        overflow: "hidden",
       }}
     >
-      <div
-        className="signup-card"
-        style={{
-          maxWidth: 480,
-          width: "100%",
-          background: "white",
-          borderRadius: 16,
-          padding: "2rem",
-          boxShadow: "0 20px 50px rgba(15,23,42,0.4)",
-        }}
-      >
-        <h1
-          style={{
-            fontSize: "1.5rem",
-            fontWeight: 600,
-            marginBottom: "0.25rem",
-            color: "#020617",
+      {/* Spline Background */}
+      <div style={{
+        position: "fixed",
+        top: 0,
+        left: "40%",
+        width: "60vw",
+        height: "100vh",
+        zIndex: 0,
+        background: "transparent",
+        pointerEvents: "none",
+      }}>
+        <iframe 
+          src='https://my.spline.design/retrofuturismbganimation-M6WKO4dauCYq95VkTOzjYgRt/' 
+          frameBorder='0' 
+          width='100%' 
+          height='100%'
+          style={{ 
+            pointerEvents: "none",
+            transform: "scale(1.2)",
+            opacity: 0.8,
           }}
-        >
-          Create your workspace
-        </h1>
-        <p
-          style={{
-            fontSize: 14,
-            color: "#6b7280",
-            marginBottom: "1.5rem",
-          }}
-        >
-          This signup form will eventually send data to{" "}
-          <code>/api/signup</code> for the backend.
-        </p>
+        />
+      </div>
 
-        <form
-          onSubmit={handleSubmit}
+      {/* Form Container */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={`step-${step}`}
+          className="signup-card"
           style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "0.75rem",
+            width: step === 1 ? "580px" : "720px",
+            maxWidth: "90vw",
+            background: theme.warmWhite,
+            borderRadius: 24,
+            padding: "3rem",
+            boxShadow: "0 20px 60px rgba(81, 0, 0, 0.15)",
+            overflow: "hidden",
+            zIndex: 1,
+            position: "relative",
+            margin: "2rem",
+          }}
+          initial={{ opacity: 0, x: step === 1 ? -50 : 50 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: step === 1 ? 50 : -50 }}
+          transition={{
+            type: "spring",
+            stiffness: 300,
+            damping: 30
           }}
         >
-          {/* First + last name */}
-          <div style={{ display: "flex", gap: "0.75rem" }}>
-            <div style={{ flex: 1 }}>
-              <label
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: "#4b5563",
-                }}
-              >
-                First name
-              </label>
-              <input
-                name="firstName"
-                value={form.firstName}
-                onChange={handleChange}
-                required
-                style={{
-                  marginTop: 4,
-                  width: "100%",
-                  padding: "0.5rem 0.75rem",
-                  borderRadius: 8,
-                  border: "1px solid #e5e7eb",
-                  fontSize: 14,
-                }}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: "#4b5563",
-                }}
-              >
-                Last name
-              </label>
-              <input
-                name="lastName"
-                value={form.lastName}
-                onChange={handleChange}
-                required
-                style={{
-                  marginTop: 4,
-                  width: "100%",
-                  padding: "0.5rem 0.75rem",
-                  borderRadius: 8,
-                  border: "1px solid #e5e7eb",
-                  fontSize: 14,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Email */}
-          <div>
-            <label
+          {/* Form Header */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <h1
               style={{
-                fontSize: 12,
-                fontWeight: 500,
-                color: "#4b5563",
+                fontSize: "1.75rem",
+                fontWeight: 600,
+                marginBottom: "0.5rem",
+                color: theme.maroon,
               }}
             >
-              Work email
-            </label>
-            <input
-              type="email"
-              name="email"
-              value={form.email}
-              onChange={handleChange}
-              required
-              placeholder="you@company.com"
-              style={{
-                marginTop: 4,
-                width: "100%",
-                padding: "0.5rem 0.75rem",
-                borderRadius: 8,
-                border: "1px solid #e5e7eb",
-                fontSize: 14,
-              }}
-            />
-          </div>
-
-          {/* Password */}
-          <div>
-            <label
-              style={{
-                fontSize: 12,
-                fontWeight: 500,
-                color: "#4b5563",
-              }}
-            >
-              Password
-            </label>
-            <input
-              type="password"
-              name="password"
-              value={form.password}
-              onChange={handleChange}
-              required
-              style={{
-                marginTop: 4,
-                width: "100%",
-                padding: "0.5rem 0.75rem",
-                borderRadius: 8,
-                border: "1px solid #e5e7eb",
-                fontSize: 14,
-              }}
-            />
+              {step === 1 ? "Create your account" : "Upload Documents"}
+            </h1>
             <p
               style={{
-                marginTop: 4,
-                fontSize: 10,
-                color: "#9ca3af",
-              }}
-            >
-              At least 8 characters. Use a mix of letters, numbers, and symbols.
-            </p>
-          </div>
-
-          {/* Company name */}
-          <div>
-            <label
-              style={{
-                fontSize: 12,
-                fontWeight: 500,
-                color: "#4b5563",
-              }}
-            >
-              Company name
-            </label>
-            <input
-              name="companyName"
-              value={form.companyName}
-              onChange={handleChange}
-              required
-              placeholder="Acme Inc."
-              style={{
-                marginTop: 4,
-                width: "100%",
-                padding: "0.5rem 0.75rem",
-                borderRadius: 8,
-                border: "1px solid #e5e7eb",
                 fontSize: 14,
-              }}
-            />
-          </div>
-
-          {/* Account type radios */}
-          <div>
-            <p
-              style={{
-                fontSize: 12,
-                fontWeight: 500,
-                color: "#4b5563",
-                marginBottom: 4,
+                color: "#666",
+                marginBottom: "1.5rem",
               }}
             >
-              We manage:
+              {step === 1 
+                ? "Start by setting up your login credentials"
+                : "Please provide the following compliance documents"}
             </p>
+          </motion.div>
+
+          {/* Progress Indicator */}
+          <div style={{ 
+            display: "flex", 
+            gap: "8px", 
+            marginBottom: "2rem" 
+          }}>
             <div
               style={{
-                display: "flex",
-                gap: "0.75rem",
-                fontSize: 12,
+                flex: 1,
+                height: "4px",
+                borderRadius: "2px",
+                background: theme.maroon,
+                opacity: step === 1 ? 1 : 0.3,
+                transition: "opacity 0.3s ease",
               }}
-            >
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                <input
-                  type="radio"
-                  name="accountType"
-                  value="vendors"
-                  checked={form.accountType === "vendors"}
-                  onChange={handleChange}
-                />
-                Vendors
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                <input
-                  type="radio"
-                  name="accountType"
-                  value="clients"
-                  checked={form.accountType === "clients"}
-                  onChange={handleChange}
-                />
-                Clients
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                <input
-                  type="radio"
-                  name="accountType"
-                  value="both"
-                  checked={form.accountType === "admin"}
-                  onChange={handleChange}
-                />
-                Both
-              </label>
-            </div>
+            />
+            <div
+              style={{
+                flex: 1,
+                height: "4px",
+                borderRadius: "2px",
+                background: theme.maroon,
+                opacity: step === 2 ? 1 : 0.3,
+                transition: "opacity 0.3s ease",
+              }}
+            />
           </div>
 
-          {/* Submit button */}
-          <button
-            type="submit"
-            disabled={status === "loading"}
-            style={{
-              marginTop: 8,
-              width: "100%",
-              padding: "0.6rem 0.75rem",
-              borderRadius: 9999,
-              border: "none",
-              fontSize: 14,
-              fontWeight: 500,
-              color: "white",
-              background: status === "loading" ? "#4f46e5aa" : "#4f46e5",
-              cursor: status === "loading" ? "default" : "pointer",
-            }}
-          >
-            {status === "loading" ? "Creating workspace..." : "Create workspace"}
-          </button>
+          {/* Form Content */}
+          <form onSubmit={handleSubmit}>
+            <AnimatePresence mode="wait">
+                {step === 1 && (
+                <motion.div
+                  key="step-1"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.3 }}
+                  style={{ display: "grid", gap: "1.5rem" }}
+                >
+                  {/* Personal Info Fields */}
+                  <div style={{ display: "grid", gap: "1.5rem" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
+                      <div>
+                        <label style={{ 
+                          color: theme.text, 
+                          fontSize: 13, 
+                          marginBottom: 6, 
+                          display: "block",
+                          fontWeight: 500 
+                        }}>
+                          First Name
+                        </label>
+                        <input
+                          name="firstName"
+                          value={form.firstName}
+                          onChange={handleChange}
+                          required
+                          style={{
+                            width: "100%",
+                            padding: "0.9rem",
+                            border: "1px solid #E5E7EB",
+                            borderRadius: 12,
+                            background: "white",
+                            color: theme.text,
+                            fontSize: "15px",
+                            transition: "all 0.2s ease",
+                            outline: "none"
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ 
+                          color: theme.text, 
+                          fontSize: 13, 
+                          marginBottom: 6, 
+                          display: "block",
+                          fontWeight: 500 
+                        }}>
+                          Last Name
+                        </label>
+                        <input
+                          name="lastName"
+                          value={form.lastName}
+                          onChange={handleChange}
+                          required
+                          style={{
+                            width: "100%",
+                            padding: "0.9rem",
+                            border: "1px solid #E5E7EB",
+                            borderRadius: 12,
+                            background: "white",
+                            color: theme.text,
+                            fontSize: "15px",
+                            transition: "all 0.2s ease",
+                            outline: "none"
+                          }}
+                        />
+                      </div>
+                    </div>
 
-          {/* Status messages */}
-          {status === "success" && (
-            <p
-              style={{
-                marginTop: 8,
-                fontSize: 12,
-                color: "#16a34a",
-              }}
-            >
-              Signup successful (simulated). Showing dashboard…
-            </p>
-          )}
-          {status === "error" && (
-            <p
-              style={{
-                marginTop: 8,
-                fontSize: 12,
-                color: "#dc2626",
-              }}
-            >
-              {errorMessage || "Something went wrong."}
-            </p>
-          )}
+                    <div>
+                      <label style={{ 
+                        color: theme.text, 
+                        fontSize: 13, 
+                        marginBottom: 6, 
+                        display: "block",
+                        fontWeight: 500 
+                      }}>
+                        Company Name
+                      </label>
+                      <input
+                        name="companyName"
+                        value={form.companyName}
+                        onChange={handleChange}
+                        required
+                        placeholder="Enter your company name"
+                        style={{
+                          width: "100%",
+                          padding: "0.9rem",
+                          border: "1px solid #E5E7EB",
+                          borderRadius: 12,
+                          background: "white",
+                          color: theme.text,
+                          fontSize: "15px",
+                          transition: "all 0.2s ease",
+                          outline: "none"
+                        }}
+                      />
+                    </div>
 
-          <p
-            style={{
-              marginTop: 8,
-              fontSize: 10,
-              color: "#9ca3af",
-              textAlign: "center",
-            }}
-          >
-            By continuing, you agree to our Terms of Service and Privacy Policy.
-          </p>
-        </form>
-      </div>
+                    <div>
+                      <label style={{ 
+                        color: theme.text, 
+                        fontSize: 13, 
+                        marginBottom: 8, 
+                        display: "block",
+                        fontWeight: 500 
+                      }}>
+                        Account Type
+                      </label>
+                      <div style={{ 
+                        display: "grid", 
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "1rem" 
+                      }}>
+                        <label style={{ 
+                          display: "flex",
+                          alignItems: "center",
+                          padding: "0.7rem 1rem",
+                          border: `2px solid ${form.accountType === "vendors" ? theme.maroon : "#E5E7EB"}`,
+                          borderRadius: 12,
+                          cursor: "pointer",
+                          transition: "all 0.2s ease",
+                          background: form.accountType === "vendors" ? `${theme.maroon}08` : "white",
+                          color: theme.text
+                        }}>
+                          <input
+                            type="radio"
+                            name="accountType"
+                            value="vendors"
+                            checked={form.accountType === "vendors"}
+                            onChange={handleChange}
+                            style={{
+                              marginRight: "8px",
+                              accentColor: theme.maroon
+                            }}
+                          />
+                          Vendor
+                        </label>
+                        <label style={{ 
+                          display: "flex",
+                          alignItems: "center",
+                          padding: "0.7rem 1rem",
+                          border: `2px solid ${form.accountType === "clients" ? theme.maroon : "#E5E7EB"}`,
+                          borderRadius: 12,
+                          cursor: "pointer",
+                          transition: "all 0.2s ease",
+                          background: form.accountType === "clients" ? `${theme.maroon}08` : "white",
+                          color: theme.text
+                        }}>
+                          <input
+                            type="radio"
+                            name="accountType"
+                            value="clients"
+                            checked={form.accountType === "clients"}
+                            onChange={handleChange}
+                            style={{
+                              marginRight: "8px",
+                              accentColor: theme.maroon
+                            }}
+                          />
+                          Client
+                        </label>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{ 
+                        color: theme.text, 
+                        fontSize: 13, 
+                        marginBottom: 6, 
+                        display: "block",
+                        fontWeight: 500 
+                      }}>
+                        Email
+                      </label>
+                      <input
+                        type="email"
+                        name="email"
+                        value={form.email}
+                        onChange={handleChange}
+                        required
+                        placeholder="you@company.com"
+                        style={{
+                          width: "100%",
+                          padding: "0.9rem",
+                          border: "1px solid #E5E7EB",
+                          borderRadius: 12,
+                          background: "white",
+                          color: theme.text,
+                          fontSize: "15px",
+                          transition: "all 0.2s ease",
+                          outline: "none"
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ 
+                        color: theme.text, 
+                        fontSize: 13, 
+                        marginBottom: 6, 
+                        display: "block",
+                        fontWeight: 500 
+                      }}>
+                        Password
+                      </label>
+                      <input
+                        type="password"
+                        name="password"
+                        value={form.password}
+                        onChange={handleChange}
+                        required
+                        placeholder="Create a secure password"
+                        style={{
+                          width: "100%",
+                          padding: "0.9rem",
+                          border: "1px solid #E5E7EB",
+                          borderRadius: 12,
+                          background: "white",
+                          color: theme.text,
+                          fontSize: "15px",
+                          transition: "all 0.2s ease",
+                          outline: "none"
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setStep(2)}
+                    style={{
+                      marginTop: "1rem",
+                      padding: "0.75rem",
+                      background: theme.maroon,
+                      color: "white",
+                      border: "none",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      fontSize: 16,
+                      fontWeight: 500,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "0.5rem",
+                    }}
+                  >
+                    Continue to Documents
+                  </button>
+                </motion.div>
+              )}
+
+              {step === 2 && (
+                <motion.div
+                  key="step-2"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.3 }}
+                  style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
+                >
+                  {/* Document Upload Fields */}
+                  <div>
+                    <div style={{ marginBottom: "1.5rem" }}>
+                      <label style={{ color: theme.maroon, fontSize: 14, marginBottom: 4, display: "block" }}>
+                        SOC 2 Report (Type I or II)
+                      </label>
+                      <input
+                        type="file"
+                        name="soc2Report"
+                        onChange={handleChange}
+                        accept=".pdf,.doc,.docx"
+                        style={{
+                          width: "100%",
+                          padding: "0.75rem",
+                          border: `1px solid ${theme.maroon}`,
+                          borderRadius: 8,
+                          background: "white",
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: "1.5rem" }}>
+                      <label style={{ color: theme.maroon, fontSize: 14, marginBottom: 4, display: "block" }}>
+                        ISO 27001 Certificate
+                      </label>
+                      <input
+                        type="file"
+                        name="iso27001Cert"
+                        onChange={handleChange}
+                        accept=".pdf,.doc,.docx"
+                        style={{
+                          width: "100%",
+                          padding: "0.75rem",
+                          border: `1px solid ${theme.maroon}`,
+                          borderRadius: 8,
+                          background: "white",
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: "1.5rem" }}>
+                      <label style={{ color: theme.maroon, fontSize: 14, marginBottom: 4, display: "block" }}>
+                        Audit Reports
+                      </label>
+                      <input
+                        type="file"
+                        name="auditReports"
+                        onChange={handleChange}
+                        accept=".pdf,.doc,.docx"
+                        style={{
+                          width: "100%",
+                          padding: "0.75rem",
+                          border: `1px solid ${theme.maroon}`,
+                          borderRadius: 8,
+                          background: "white",
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: "1.5rem" }}>
+                      <label style={{ color: theme.maroon, fontSize: 14, marginBottom: 4, display: "block" }}>
+                        Certificate of Insurance
+                      </label>
+                      <input
+                        type="file"
+                        name="insuranceCert"
+                        onChange={handleChange}
+                        accept=".pdf,.doc,.docx"
+                        style={{
+                          width: "100%",
+                          padding: "0.75rem",
+                          border: `1px solid ${theme.maroon}`,
+                          borderRadius: 8,
+                          background: "white",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "1rem", marginTop: "1rem" }}>
+                    <button
+                      type="button"
+                      onClick={() => setStep(1)}
+                      style={{
+                        padding: "0.75rem",
+                        background: "transparent",
+                        color: theme.maroon,
+                        border: `1px solid ${theme.maroon}`,
+                        borderRadius: 8,
+                        cursor: "pointer",
+                        fontSize: 16,
+                        fontWeight: 500,
+                        flex: 1,
+                      }}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={status === "loading"}
+                      style={{
+                        padding: "0.75rem",
+                        background: theme.maroon,
+                        color: "white",
+                        border: "none",
+                        borderRadius: 8,
+                        cursor: status === "loading" ? "default" : "pointer",
+                        fontSize: 16,
+                        fontWeight: 500,
+                        flex: 2,
+                        opacity: status === "loading" ? 0.7 : 1,
+                      }}
+                    >
+                      {status === "loading" ? "Creating..." : "Create Workspace"}
+                    </button>
+                  </div>
+
+                  {status === "error" && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      style={{
+                        color: "#dc2626",
+                        fontSize: 14,
+                        textAlign: "center",
+                        marginTop: "1rem",
+                      }}
+                    >
+                      {errorMessage}
+                    </motion.p>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </form>
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
+
 }
 
 export default App;
