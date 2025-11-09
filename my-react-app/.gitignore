@@ -25,3 +25,12 @@ dist-ssr
 
 /src/firebase.ts
 *.env
+# Ignore all .env files
+.env
+backend/.env
+frontend/.env
+
+# Ignore all node_modules folders
+node_modules/
+backend/node_modules/
+my-react-app/node_modules/

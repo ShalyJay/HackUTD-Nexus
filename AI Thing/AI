@@ -1,0 +1,78 @@
+// backend/server.js
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { OpenAI } from 'openai';
+
+dotenv.config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
+if (!NVIDIA_API_KEY) {
+  console.error("FATAL ERROR: NVIDIA_API_KEY is missing in .env");
+  process.exit(1);
+}
+
+const openai = new OpenAI({
+  apiKey: NVIDIA_API_KEY,
+  baseURL: 'https://integrate.api.nvidia.com/v1',
+});
+
+// THIS IS THE UPDATED BRAIN FOR YOUR BOT
+const SYSTEM_PROMPT = `
+You are "Nexus," an expert onboarding assistant for a high-compliance financial institution.
+Your goal is to collect specific registration information from new users.
+
+Follow these rules strictly:
+1.  **Tone:** Professional, concise, polite, and helpful.
+2.  **Identify Role:** Your FIRST question must be to ask if they are a "Client" or a "Vendor".
+3.  **One by One:** Ask for only ONE piece of information at a time. Do not ask for everything at once.
+4.  **Collection Flow:** After identifying their role, collect the following:
+    * **Ask Everyone:** "Legal Company Name"
+    * **Ask Everyone:** "Tax ID / Employer Identification Number (EIN)"
+    * **Ask Everyone:** "Registered Business Address"
+    * **Compliance Question:** "As part of our AML (Anti-Money Laundering) verification, has any beneficial owner or control person of your company been convicted of a financial crime?"
+5.  **Final Step:** Once all information is collected, provide a summary and ask for confirmation.
+`;
+
+// In-memory chat history (for demo purposes)
+const chatHistories = {};
+
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, sessionId } = req.body;
+
+    if (!chatHistories[sessionId]) {
+      chatHistories[sessionId] = [
+        { role: "system", content: SYSTEM_PROMPT }
+      ];
+    }
+
+    chatHistories[sessionId].push({ role: "user", content: message });
+
+    const completion = await openai.chat.completions.create({
+      model: "qwen/qwen2.5-coder-32b-instruct",
+      messages: chatHistories[sessionId],
+      temperature: 0.2,
+      max_tokens: 1024,
+      stream: false
+    });
+
+    const botResponse = completion.choices[0].message.content;
+    chatHistories[sessionId].push({ role: "assistant", content: botResponse });
+
+    res.json({ response: botResponse });
+
+  } catch (error) {
+    console.error("Error calling NVIDIA API:", error);
+    res.status(500).json({ error: "Failed to get response from AI." });
+  }
+});
+
+const PORT = 5001;
+app.listen(PORT, () => {
+  console.log(`FinBot Server running on port ${PORT}`);
+});
