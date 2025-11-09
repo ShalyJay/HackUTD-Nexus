@@ -443,31 +443,31 @@ export default function Dashboard({
                             {vendor.companyName}
                           </h4>
                           <p style={{ margin: 0, color: theme.gray, fontSize: "0.9rem" }}>
-                            Status: <strong>{vendor.status}</strong>
+                            Status: <strong>{vendor?.status || "active"}</strong>
                           </p>
                         </div>
                         <div style={{ flex: 1 }}>
                           <p style={{ margin: "0 0 0.25rem 0", color: theme.lightText, fontSize: "0.85rem", fontWeight: 500 }}>
-                            SOC 2
+                            Compliance
                           </p>
                           <p style={{ margin: 0, color: theme.text, fontWeight: 600 }}>
-                            {vendor.documents.soc2.status}
+                            {vendor?.riskLevel || "Pending"}
                           </p>
                           <p style={{ margin: "0.25rem 0 0 0", color: theme.gray, fontSize: "0.85rem" }}>
-                            {vendor.documents.soc2.date}
+                            {vendor?.documents?.soc2?.date || "Not reviewed"}
                           </p>
                         </div>
                         <div style={{ textAlign: "right", minWidth: "fit-content" }}>
                           <div style={{
                             display: "inline-block",
                             padding: "0.5rem 1rem",
-                            background: vendor.score >= 80 ? `${theme.green}15` : vendor.score >= 60 ? `${theme.orange}15` : `${theme.red}15`,
-                            color: vendor.score >= 80 ? theme.green : vendor.score >= 60 ? theme.orange : theme.red,
+                            background: (vendor?.score || 0) >= 80 ? `${theme.green}15` : (vendor?.score || 0) >= 60 ? `${theme.orange}15` : `${theme.red}15`,
+                            color: (vendor?.score || 0) >= 80 ? theme.green : (vendor?.score || 0) >= 60 ? theme.orange : theme.red,
                             borderRadius: 6,
                             fontWeight: 700,
                             fontSize: "0.95rem"
                           }}>
-                            {vendor.score}%
+                            {vendor?.score || 0}%
                           </div>
                         </div>
                       </div>
@@ -528,7 +528,7 @@ export default function Dashboard({
                             Latest Document
                           </p>
                           <p style={{ margin: 0, color: theme.text, fontWeight: 500, fontSize: "0.9rem" }}>
-                            {client.documents[0]?.name || "—"}
+                            {Array.isArray(client.documents) ? (client.documents[0]?.name || "—") : "—"}
                           </p>
                         </div>
                         <div style={{ flex: 1 }}>
@@ -536,7 +536,7 @@ export default function Dashboard({
                             Status
                           </p>
                           <p style={{ margin: 0, color: theme.text, fontWeight: 500 }}>
-                            {client.documents[0]?.status || "—"}
+                            {Array.isArray(client.documents) ? (client.documents[0]?.status || "—") : "—"}
                           </p>
                         </div>
                         <div style={{ textAlign: "right", minWidth: "fit-content" }}>
