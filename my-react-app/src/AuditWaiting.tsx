@@ -3,12 +3,14 @@ import type { AuditResult } from './services/auditResultService';
 
 interface AuditWaitingProps {
   onCompliancePassed: (userId: string) => void;
+  onRetryUpload: () => void;
   auditResult: AuditResult | null;
   isAnalyzing: boolean;
 }
 
 export default function AuditWaiting({
   onCompliancePassed,
+  onRetryUpload,
   auditResult,
   isAnalyzing,
 }: AuditWaitingProps) {
@@ -395,22 +397,40 @@ export default function AuditWaiting({
             documents and try again.
           </p>
 
-          <button
-            onClick={() => window.location.href = '/'}
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              borderRadius: 9999,
-              border: 'none',
-              fontSize: 14,
-              fontWeight: 600,
-              color: 'white',
-              background: '#6b7280',
-              cursor: 'pointer',
-            }}
-          >
-            Return to Sign Up
-          </button>
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <button
+              onClick={onRetryUpload}
+              style={{
+                flex: 1,
+                padding: '0.75rem',
+                borderRadius: 9999,
+                border: 'none',
+                fontSize: 14,
+                fontWeight: 600,
+                color: 'white',
+                background: '#4f46e5',
+                cursor: 'pointer',
+              }}
+            >
+              Re-upload Documents
+            </button>
+            <button
+              onClick={() => window.location.href = '/'}
+              style={{
+                flex: 1,
+                padding: '0.75rem',
+                borderRadius: 9999,
+                border: '1px solid #e5e7eb',
+                fontSize: 14,
+                fontWeight: 600,
+                color: '#020617',
+                background: 'white',
+                cursor: 'pointer',
+              }}
+            >
+              Return to Sign Up
+            </button>
+          </div>
         </div>
       </div>
     );
