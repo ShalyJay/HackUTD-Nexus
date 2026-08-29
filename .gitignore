@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local Firebase web config (project-specific; keep out of git)
+**/src/firebase.ts
+
+# Build / caches
+dist/
+build/
+.cache/
+.turbo/
+
+# Logs / OS / IDE
+*.log
+.DS_Store
+.vscode/
+.idea/
