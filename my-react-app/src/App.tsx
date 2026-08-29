@@ -37,16 +37,6 @@ type LoginPayload = {
   password: string;
 };
 
-// Hardcoded admin credentials (for demo purposes)
-const ADMIN_USER = {
-  email: "admin@hackutd.com",
-  password: "AdminPassword123!",
-  firstName: "Admin",
-  lastName: "User",
-  companyName: "HackUTD-Nexus",
-  accountType: "admin" as const
-};
-
 function App() {
   const [form, setForm] = useState<SignupPayload>({
     firstName: "",
@@ -204,48 +194,7 @@ function App() {
     try {
       const { email, password } = loginForm;
 
-      // Check if this is the hardcoded admin user
-      if (email === ADMIN_USER.email && password === ADMIN_USER.password) {
-        console.log("Admin login successful");
-        
-        // Store/update admin data in Firebase
-        const { db } = await import("./firebase");
-        const { doc, setDoc, Timestamp } = await import("firebase/firestore");
-        
-        const adminUserId = "admin_001";
-        const now = Timestamp.now();
-        
-        const adminUserData = {
-          userId: adminUserId,
-          firstName: ADMIN_USER.firstName,
-          lastName: ADMIN_USER.lastName,
-          email: ADMIN_USER.email,
-          companyName: ADMIN_USER.companyName,
-          accountType: ADMIN_USER.accountType,
-          status: "active",
-          onboardingComplete: true,
-          createdAt: now,
-          lastUpdated: now
-        };
-        
-        // Save admin to Firebase
-        await setDoc(doc(db, "users", adminUserId), adminUserData);
-        console.log("Admin user data stored in Firebase");
-        
-        // Create admin user session
-        const adminUser = {
-          userId: adminUserId,
-          password: password,
-          userData: adminUserData
-        };
-
-        setCurrentUser(adminUser);
-        setStatus("success");
-        setView("dashboard");
-        return;
-      }
-
-      // Try to authenticate with Firebase for non-admin users
+      // Authenticate all users (including admin) via Firebase Auth
       const { signInWithEmailAndPassword } = await import("firebase/auth");
       const { auth } = await import("./firebase");
       

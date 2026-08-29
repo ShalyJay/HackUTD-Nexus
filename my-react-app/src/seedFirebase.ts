@@ -160,40 +160,60 @@ export async function seedFirebase() {
   try {
     console.log("Starting Firebase seeding...");
 
-    // 1. Create or verify admin account in Firebase Auth
-    const adminEmail = "admin@hackutd.com";
-    const adminPassword = "AdminPassword123!";
-    
-    try {
-      // Try to create admin if doesn't exist
-      await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
-      console.log("Admin account created in Firebase Auth");
-    } catch (err: any) {
-      if (err.code === "auth/email-already-in-use") {
-        console.log("Admin account already exists in Firebase Auth");
-      } else {
-        throw err;
+    // 1. Create or verify admin account in Firebase Auth (credentials from env only)
+    const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
+    const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD;
+
+    if (adminEmail && adminPassword) {
+      let adminUid: string | null = null;
+
+      try {
+        const { user } = await createUserWithEmailAndPassword(
+          auth,
+          adminEmail,
+          adminPassword
+        );
+        adminUid = user.uid;
+        console.log("Admin account created in Firebase Auth");
+      } catch (err: any) {
+        if (err.code === "auth/email-already-in-use") {
+          console.log("Admin account already exists in Firebase Auth");
+          const { signInWithEmailAndPassword } = await import("firebase/auth");
+          const { user } = await signInWithEmailAndPassword(
+            auth,
+            adminEmail,
+            adminPassword
+          );
+          adminUid = user.uid;
+        } else {
+          throw err;
+        }
       }
+
+      // 2. Seed admin user document keyed by Firebase Auth UID
+      if (adminUid) {
+        const adminUserRef = doc(db, "users", adminUid);
+        const adminUserData = {
+          userId: adminUid,
+          firstName: "Admin",
+          lastName: "User",
+          email: adminEmail,
+          companyName: "HackUTD-Nexus",
+          accountType: "admin",
+          status: "active",
+          onboardingComplete: true,
+          createdAt: Timestamp.now(),
+          lastUpdated: Timestamp.now()
+        };
+
+        await setDoc(adminUserRef, adminUserData, { merge: true });
+        console.log("Admin user document created in Firestore");
+      }
+    } else {
+      console.warn(
+        "Skipping admin seed: set VITE_ADMIN_EMAIL and VITE_ADMIN_PASSWORD in .env.local"
+      );
     }
-
-    // 2. Seed admin user document in Firestore
-    const adminUserId = "admin_001";
-    const adminUserRef = doc(db, "users", adminUserId);
-    const adminUserData = {
-      userId: adminUserId,
-      firstName: "Admin",
-      lastName: "User",
-      email: adminEmail,
-      companyName: "HackUTD-Nexus",
-      accountType: "admin",
-      status: "active",
-      onboardingComplete: true,
-      createdAt: Timestamp.now(),
-      lastUpdated: Timestamp.now()
-    };
-
-    await setDoc(adminUserRef, adminUserData, { merge: true });
-    console.log("Admin user document created in Firestore");
 
     // 3. Seed mock vendors
     console.log("Seeding vendors...");
